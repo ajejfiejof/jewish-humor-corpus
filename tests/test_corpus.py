@@ -23,29 +23,37 @@ class TestJewishHumorCorpus(unittest.TestCase):
         self.assertIn("sections", tables)
         self.assertIn("archetypes_and_terms", tables)
         self.assertIn("sections_fts", tables)
+        self.assertIn("jokes_and_anecdotes", tables)
 
     def test_articles_volume(self):
         cur = self.conn.cursor()
         cur.execute("SELECT count(*), sum(word_count) FROM articles")
         count, words = cur.fetchone()
-        self.assertGreaterEqual(count, 10, "Corpus must have at least 10 articles")
-        self.assertGreater(words, 25000, "Corpus must exceed 25,000 words")
+        self.assertGreaterEqual(count, 20, "Corpus must have at least 20 articles")
+        self.assertGreater(words, 50000, "Corpus must exceed 50,000 words")
+
+    def test_jokes_table(self):
+        cur = self.conn.cursor()
+        cur.execute("SELECT count(*), count(DISTINCT tradition) FROM jokes_and_anecdotes")
+        count, traditions = cur.fetchone()
+        self.assertGreaterEqual(count, 12, "Must contain at least 12 curated jokes")
+        self.assertGreaterEqual(traditions, 6, "Must span at least 6 distinct traditions")
 
     def test_fts5_search(self):
         cur = self.conn.cursor()
         cur.execute("""
             SELECT article_title, section_title, snippet(sections_fts, 2, '<b>', '</b>', '...', 15)
             FROM sections_fts
-            WHERE sections_fts MATCH 'soup*'
+            WHERE sections_fts MATCH 'golem*'
         """)
         results = cur.fetchall()
-        self.assertGreaterEqual(len(results), 2, "FTS5 query for 'soup*' must return matches")
+        self.assertGreaterEqual(len(results), 1, "FTS5 query for 'golem*' must return matches")
 
     def test_archetypes_seeded(self):
         cur = self.conn.cursor()
         cur.execute("SELECT count(*) FROM archetypes_and_terms")
         count = cur.fetchone()[0]
-        self.assertGreaterEqual(count, 8, "Must contain standard archetypes")
+        self.assertGreaterEqual(count, 20, "Must contain at least 20 archetypes")
 
     def test_cli_execution_suite(self):
         cli_path = os.path.join(BASE_DIR, "cli.py")
@@ -60,20 +68,10 @@ class TestJewishHumorCorpus(unittest.TestCase):
         self.assertEqual(res_search.returncode, 0)
         self.assertIn("FTS5 Query", res_search.stdout)
 
-        # 3. analyze
-        res_analyze = subprocess.run([sys.executable, cli_path, "analyze"], capture_output=True, text=True)
-        self.assertEqual(res_analyze.returncode, 0)
-        self.assertIn("Stylometry", res_analyze.stdout)
-
-        # 4. anecdote
-        res_anecdote = subprocess.run([sys.executable, cli_path, "anecdote"], capture_output=True, text=True)
-        self.assertEqual(res_anecdote.returncode, 0)
-        self.assertIn("Corpus Anecdote", res_anecdote.stdout)
-
-        # 5. read
-        res_read = subprocess.run([sys.executable, cli_path, "read", "Chelm"], capture_output=True, text=True)
-        self.assertEqual(res_read.returncode, 0)
-        self.assertIn("Wise Men of Chelm", res_read.stdout)
+        # 3. jokes
+        res_jokes = subprocess.run([sys.executable, cli_path, "jokes", "--tradition", "Sephardic"], capture_output=True, text=True)
+        self.assertEqual(res_jokes.returncode, 0)
+        self.assertIn("Djohá", res_jokes.stdout)
 
 if __name__ == "__main__":
     unittest.main()

@@ -540,6 +540,13 @@ def cmd_serve(port=8000):
                     results = []
                 conn.close()
                 self.send_json(results)
+            elif path == "/api/jokes":
+                conn = get_connection()
+                cur = conn.cursor()
+                cur.execute("SELECT id, title, tradition, category, setup, punchline, analysis, source FROM jokes_and_anecdotes")
+                data = [{"id": r[0], "title": r[1], "tradition": r[2], "category": r[3], "setup": r[4], "punchline": r[5], "analysis": r[6], "source": r[7]} for r in cur.fetchall()]
+                conn.close()
+                self.send_json(data)
             elif path == "/api/anecdote":
                 import random
                 self.send_json(random.choice(CURATED_ANECDOTES))
@@ -629,6 +636,51 @@ def cmd_serve(port=8000):
         except KeyboardInterrupt:
             console.print("\n[dim]Server stopped.[/dim]")
 
+
+# --- COMMAND: JOKES DATABASE EXPLORER ---
+def cmd_jokes(tradition=None, category=None, search=None):
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    query = "SELECT id, title, tradition, category, setup, punchline, analysis, source FROM jokes_and_anecdotes WHERE 1=1"
+    params = []
+    
+    if tradition:
+        query += " AND tradition LIKE ?"
+        params.append(f"%{tradition}%")
+    if category:
+        query += " AND category LIKE ?"
+        params.append(f"%{category}%")
+    if search:
+        query += " AND (setup LIKE ? OR punchline LIKE ? OR title LIKE ?)"
+        params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+        
+    query += " ORDER BY id ASC"
+    cur.execute(query, params)
+    jokes = cur.fetchall()
+    
+    if not jokes:
+        console.print("[bold red]No jokes found matching the criteria.[/bold red]")
+        conn.close()
+        return
+        
+    console.print(Panel(f"[bold cyan]Corpus of Jewish Humor: Primary Joke & Anecdote Registry[/bold cyan]\nDisplaying [bold green]{len(jokes)}[/bold green] curated primary jokes across historical traditions.", box=box.ROUNDED))
+    
+    for jid, title, trad, cat, setup, punch, analysis, src in jokes:
+        p_text = Text()
+        p_text.append(f"TRADITION: {trad}  •  CATEGORY: {cat}\n\n", style="bold yellow")
+        p_text.append(f"SETUP:\n", style="bold cyan")
+        p_text.append(f"{setup}\n\n", style="white")
+        p_text.append(f"PUNCHLINE:\n", style="bold green")
+        p_text.append(f"{punch}\n\n", style="bold white")
+        p_text.append(f"COMEDIC & CULTURAL MECHANICS:\n", style="bold magenta")
+        p_text.append(f"• {analysis}\n\n", style="dim white")
+        p_text.append(f"SOURCE: {src}", style="italic dim")
+        
+        console.print(Panel(p_text, title=f"[bold white]Joke #{jid}: {title}[/bold white]", box=box.ROUNDED, border_style="cyan"))
+        
+    conn.close()
+
 def main():
     parser = argparse.ArgumentParser(description="Corpus of Jewish Humor: Research & NLP Suite")
     subparsers = parser.add_subparsers(dest="command")
@@ -653,6 +705,11 @@ def main():
     p_export.add_argument("--output", help="Custom output file path")
 
     
+    
+    p_jokes = subparsers.add_parser("jokes", help="Browse structured primary jokes and anecdotes with setup/punchline analysis")
+    p_jokes.add_argument("--tradition", help="Filter by tradition (e.g. Ashkenazi, Sephardic, Soviet, Talmudic, Borscht)")
+    p_jokes.add_argument("--category", help="Filter by category (e.g. 'Folk Folly', 'Trickster', 'Political')")
+    p_jokes.add_argument("--search", help="Search text in setups or punchlines")
     p_anecdote = subparsers.add_parser("anecdote", help="Display a curated folk joke, parable, or anecdote")
     p_anecdote.add_argument("--topic", help="Filter anecdotes by keyword or category")
     
@@ -677,6 +734,9 @@ def main():
     elif args.command == "export":
         cmd_export(fmt=args.format, output_path=args.output)
     
+    
+    elif args.command == "jokes":
+        cmd_jokes(tradition=args.tradition, category=args.category, search=args.search)
     elif args.command == "anecdote":
         cmd_anecdote(topic=args.topic)
     elif args.command == "explore":
