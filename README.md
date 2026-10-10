@@ -1,4 +1,7 @@
 # Corpus of Jewish Humor 🎭 (v0.4.0)
+[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Datasets-blue)](https://huggingface.co/datasets/abr00kx/jewish-humor-corpus)
+[![GitHub License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 > A comprehensive computational linguistics, folklore research, and machine learning dataset suite for Jewish humor across Ashkenazi, Sephardic, Talmudic, Soviet, and Modern traditions.
 
 ![Corpus Dashboard](assets/demo_screenshot.png)
@@ -29,6 +32,15 @@ The **Corpus of Jewish Humor** is an open-source natural language processing sui
 ---
 
 ## Quickstart
+
+### 0. Load Directly via Hugging Face `datasets`
+```python
+from datasets import load_dataset
+
+# Load the primary joke benchmark dataset
+dataset = load_dataset("abr00kx/jewish-humor-corpus")
+print(dataset["train"][0])
+```
 
 ### Installation
 Clone the repository and install as an editable package (provides the `jhc` command):
