@@ -560,6 +560,139 @@ def cmd_read(target):
     conn.close()
 
 # --- COMMAND 9: WEB SERVER & REST API ---
+
+# --- COMMAND: INTERACTIVE TUI EXPLORER ---
+def cmd_explore():
+    console.print(Panel("[bold cyan]Corpus of Jewish Humor: Interactive Terminal Explorer (jhc v0.4.0)[/bold cyan]\n"
+                        "Available commands: [yellow]catalog[/yellow], [yellow]archetypes[/yellow], [yellow]jokes[/yellow], [yellow]analyze[/yellow], [yellow]search <query>[/yellow], [yellow]read <doc>[/yellow], [yellow]harvest <topic>[/yellow], [yellow]exit[/yellow]",
+                        box=box.ROUNDED))
+    while True:
+        try:
+            cmd = console.input("[bold yellow]jhc>[/bold yellow] ").strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[dim]Session closed.[/dim]")
+            break
+        if not cmd or cmd in ["q", "quit", "exit"]:
+            console.print("[dim]Goodbye![/dim]")
+            break
+        parts = cmd.split(maxsplit=1)
+        sub = parts[0].lower()
+        arg = parts[1] if len(parts) > 1 else ""
+        if sub == "catalog":
+            cmd_catalog()
+        elif sub == "archetypes":
+            cmd_archetypes()
+        elif sub == "jokes":
+            cmd_jokes(search=arg if arg else None)
+        elif sub == "analyze":
+            cmd_analyze()
+        elif sub == "search":
+            cmd_search(arg if arg else "humor")
+        elif sub == "read":
+            cmd_read(arg if arg else "1")
+        elif sub == "harvest":
+            if arg:
+                cmd_harvest(arg)
+            else:
+                console.print("[red]Usage: harvest <wikipedia_title>[/red]")
+        elif sub in ["help", "?"]:
+            console.print("[cyan]Commands: catalog, archetypes, jokes, analyze, search <query>, read <doc>, harvest <title>, exit[/cyan]")
+        else:
+            console.print(f"[red]Unknown command '{sub}'. Type 'help' or 'exit'.[/red]")
+
+# --- COMMAND: REBUILD DATABASE REPOSITORY ---
+def cmd_rebuild():
+    console.print("[bold yellow]Rebuilding database repository from raw JSON archives and seed routines...[/bold yellow]")
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    # 1. Reset relational tables
+    cur.execute("DROP TABLE IF EXISTS sections_fts")
+    cur.execute("DROP TABLE IF EXISTS sections")
+    cur.execute("DROP TABLE IF EXISTS articles")
+    
+    cur.execute("""
+    CREATE TABLE articles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT UNIQUE,
+        word_count INTEGER,
+        char_count INTEGER,
+        summary TEXT,
+        full_text TEXT,
+        harvested_at TEXT
+    )
+    """)
+    cur.execute("""
+    CREATE TABLE sections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        article_id INTEGER,
+        section_title TEXT,
+        section_level INTEGER,
+        content TEXT,
+        word_count INTEGER,
+        FOREIGN KEY(article_id) REFERENCES articles(id)
+    )
+    """)
+    cur.execute("""
+    CREATE VIRTUAL TABLE sections_fts USING fts5(
+        article_title,
+        section_title,
+        content,
+        content_rowid UNINDEXED
+    )
+    """)
+
+    # Ingest from data/raw/
+    raw_files = [f for f in sorted(os.listdir(RAW_DIR)) if f.endswith(".json")]
+    doc_count = 0
+    sec_count = 0
+    total_words = 0
+    
+    for f in raw_files:
+        p = os.path.join(RAW_DIR, f)
+        with open(p, "r", encoding="utf-8") as jf:
+            d = json.load(jf)
+        title = d.get("title", "")
+        text = d.get("full_text", "")
+        if not text:
+            continue
+        wc = len(text.split())
+        cc = len(text)
+        summary = text.split("==")[0].strip()
+        ts = d.get("harvested_at", "")
+        
+        cur.execute("""
+            INSERT OR REPLACE INTO articles (title, word_count, char_count, summary, full_text, harvested_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (title, wc, cc, summary, text, ts))
+        art_id = cur.lastrowid
+        doc_count += 1
+        total_words += wc
+        
+        sec_matches = list(re.finditer(r"(={2,4})\s*([^=]+)\s*\1", text))
+        for match in sec_matches:
+            sec_level = len(match.group(1))
+            sec_title = match.group(2).strip()
+            start = match.end()
+            end = sec_matches[sec_matches.index(match)+1].start() if sec_matches.index(match)+1 < len(sec_matches) else len(text)
+            sec_content = text[start:end].strip()
+            sec_wc = len(sec_content.split())
+            if sec_content and sec_title.lower() not in ["references", "further reading", "see also", "notes", "bibliography", "external links"]:
+                cur.execute("""
+                    INSERT INTO sections (article_id, section_title, section_level, content, word_count)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (art_id, sec_title, sec_level, sec_content, sec_wc))
+                sid = cur.lastrowid
+                cur.execute("""
+                    INSERT INTO sections_fts (content_rowid, article_title, section_title, content)
+                    VALUES (?, ?, ?, ?)
+                """, (sid, title, sec_title, sec_content))
+                sec_count += 1
+
+    conn.commit()
+    conn.close()
+    console.print(f"[bold green]Rebuild complete:[/bold green] Indexed {doc_count} articles, {sec_count} sections ({total_words:,} words) into SQLite & FTS5.")
+
 def cmd_serve(port=8000):
     import http.server
     import socketserver
@@ -626,19 +759,29 @@ def cmd_serve(port=8000):
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Corpus of Jewish Humor Explorer</title>
+    <title>Corpus of Jewish Humor Research Portal</title>
     <style>
-        :root { --bg: #0a0e17; --panel: #111827; --card: #172033; --border: #1f2937; --cyan: #38bdf8; --amber: #fbbf24; --text: #f9fafb; --muted: #94a3b8; }
+        :root { --bg: #0a0e17; --panel: #111827; --card: #172033; --border: #1f2937; --cyan: #38bdf8; --amber: #fbbf24; --green: #34d399; --text: #f9fafb; --muted: #94a3b8; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; }
-        .header { border-bottom: 2px solid var(--border); padding-bottom: 16px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; }
+        .header { border-bottom: 2px solid var(--border); padding-bottom: 16px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
         h1 { margin: 0; font-size: 24px; color: var(--cyan); }
+        .nav-tabs { display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+        .tab-btn { background: transparent; border: none; color: var(--muted); padding: 8px 16px; font-size: 15px; font-weight: 600; cursor: pointer; border-radius: 6px; }
+        .tab-btn.active { background: var(--card); color: var(--cyan); }
+        .tab-btn:hover { color: var(--text); }
         input { width: 100%; max-width: 600px; padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--text); font-size: 16px; outline: none; }
         input:focus { border-color: var(--cyan); }
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-top: 16px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; margin-top: 16px; }
         .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
         .card h3 { margin-top: 0; color: var(--amber); }
         mark { background: rgba(56, 189, 248, 0.3); color: #fff; padding: 2px 4px; border-radius: 4px; }
         .badge { display: inline-block; padding: 4px 8px; border-radius: 4px; background: rgba(56, 189, 248, 0.15); color: var(--cyan); font-size: 12px; font-weight: bold; }
+        .filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+        .filter-btn { background: var(--panel); border: 1px solid var(--border); color: var(--muted); padding: 6px 12px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+        .filter-btn.active { border-color: var(--cyan); color: var(--cyan); }
+        .joke-setup { color: var(--text); line-height: 1.45; margin-bottom: 12px; }
+        .joke-punch { color: var(--green); font-weight: 600; line-height: 1.45; border-left: 3px solid var(--green); padding-left: 10px; margin-bottom: 12px; }
+        .joke-analysis { color: var(--muted); font-size: 13px; font-style: italic; }
     </style>
 </head>
 <body>
@@ -647,13 +790,47 @@ def cmd_serve(port=8000):
             <h1>Corpus of Jewish Humor</h1>
             <p style="margin: 4px 0 0; color: var(--muted); font-size: 14px;">Interactive NLP, Folklore &amp; Joke Registry (v0.4.0)</p>
         </div>
-        <div class="badge">SQLite FTS5 + Vector Online</div>
+        <div class="badge">SQLite FTS5 + Dense Vector Online</div>
     </div>
-    <div>
-        <input type="text" id="query" placeholder="Search FTS5 &amp; Vector Corpus (e.g. 'golem', 'soup', 'rabbi', 'djoha')..." onkeyup="if(event.key === 'Enter') doSearch()">
+    <div class="nav-tabs">
+        <button class="tab-btn active" onclick="switchTab('search')">Search Engine</button>
+        <button class="tab-btn" onclick="switchTab('jokes')">Primary Jokes (100)</button>
+        <button class="tab-btn" onclick="switchTab('archetypes')">Archetypes (20)</button>
     </div>
-    <div id="results" class="grid"></div>
+
+    <!-- TAB 1: SEARCH -->
+    <div id="tab-search">
+        <div>
+            <input type="text" id="query" placeholder="Search FTS5 &amp; Vector Corpus (e.g. 'golem', 'soup', 'rabbi', 'djoha')..." onkeyup="if(event.key === 'Enter') doSearch()">
+        </div>
+        <div id="results" class="grid"></div>
+    </div>
+
+    <!-- TAB 2: JOKES -->
+    <div id="tab-jokes" style="display:none;">
+        <div class="filter-bar" id="tradition-filters"></div>
+        <div id="jokes-grid" class="grid"></div>
+    </div>
+
+    <!-- TAB 3: ARCHETYPES -->
+    <div id="tab-archetypes" style="display:none;">
+        <div id="archetypes-grid" class="grid"></div>
+    </div>
+
     <script>
+        let allJokes = [];
+        let allArchetypes = [];
+
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('tab-search').style.display = tab === 'search' ? 'block' : 'none';
+            document.getElementById('tab-jokes').style.display = tab === 'jokes' ? 'block' : 'none';
+            document.getElementById('tab-archetypes').style.display = tab === 'archetypes' ? 'block' : 'none';
+            event.target.classList.add('active');
+            if (tab === 'jokes' && allJokes.length === 0) loadJokes();
+            if (tab === 'archetypes' && allArchetypes.length === 0) loadArchetypes();
+        }
+
         async function doSearch() {
             const q = document.getElementById('query').value;
             const res = await fetch('/api/search?q=' + encodeURIComponent(q));
@@ -671,6 +848,56 @@ def cmd_serve(port=8000):
                 </div>
             `).join('');
         }
+
+        async function loadJokes() {
+            const res = await fetch('/api/jokes');
+            allJokes = await res.json();
+            const traditions = ['All', ...new Set(allJokes.map(j => j.tradition))];
+            const filterBar = document.getElementById('tradition-filters');
+            filterBar.innerHTML = traditions.map(t => `
+                <button class="filter-btn ${t==='All'?'active':''}" onclick="filterJokes('${t}', this)">${t}</button>
+            `).join('');
+            renderJokes(allJokes);
+        }
+
+        function filterJokes(tradition, btn) {
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const filtered = tradition === 'All' ? allJokes : allJokes.filter(j => j.tradition === tradition);
+            renderJokes(filtered);
+        }
+
+        function renderJokes(jokes) {
+            const grid = document.getElementById('jokes-grid');
+            grid.innerHTML = jokes.map(j => `
+                <div class="card">
+                    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                        <span class="badge">${j.tradition}</span>
+                        <span style="font-size:12px; color:var(--muted)">${j.category}</span>
+                    </div>
+                    ${j.text_original ? `<p style="color:var(--cyan); font-weight:bold; margin:4px 0 8px;">${j.text_original} <span style="font-weight:normal; font-size:12px; color:var(--muted);">(${j.yivo || ''})</span></p>` : ''}
+                    <h3 style="margin: 4px 0 10px;">${j.title}</h3>
+                    <p class="joke-setup">${j.setup}</p>
+                    <p class="joke-punch">${j.punchline}</p>
+                    <p class="joke-analysis">• ${j.analysis}</p>
+                </div>
+            `).join('');
+        }
+
+        async function loadArchetypes() {
+            const res = await fetch('/api/archetypes');
+            allArchetypes = await res.json();
+            const grid = document.getElementById('archetypes-grid');
+            grid.innerHTML = allArchetypes.map(a => `
+                <div class="card">
+                    <span class="badge" style="background:rgba(251,191,36,0.15); color:var(--amber)">${a.category}</span>
+                    <h3 style="margin: 8px 0; color:var(--cyan)">${a.term}</h3>
+                    <p style="color:var(--text); font-size:14px; line-height:1.45;">${a.definition}</p>
+                </div>
+            `).join('');
+        }
+
+        // Initial search load
         document.getElementById('query').value = 'golem';
         doSearch();
     </script>
@@ -723,6 +950,9 @@ def main():
     p_serve = subparsers.add_parser("serve", help="Launch embedded local web explorer & REST API")
     p_serve.add_argument("--port", type=int, default=8000, help="Port to serve on (default: 8000)")
 
+    
+    subparsers.add_parser("explore", help="Launch interactive terminal explorer loop")
+    subparsers.add_parser("rebuild", help="Rebuild database schema and index from raw archives")
     args = parser.parse_args()
     if args.command == "catalog":
         cmd_catalog()
@@ -740,6 +970,11 @@ def main():
         cmd_read(args.target)
     elif args.command == "export":
         cmd_export(fmt=args.format, output_path=args.output)
+    
+    elif args.command == "explore":
+        cmd_explore()
+    elif args.command == "rebuild":
+        cmd_rebuild()
     elif args.command == "serve":
         cmd_serve(port=args.port)
     else:
