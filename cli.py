@@ -396,6 +396,239 @@ def cmd_export(fmt="json", output_path=None):
     console.print(f"[bold green]Corpus successfully exported:[/bold green] [white]{output_path}[/white] ({len(rows)} sections in {fmt.upper()})")
     conn.close()
 
+
+# --- COMMAND 8: ANECDOTE EXTRACTOR ---
+
+CURATED_ANECDOTES = [
+    {
+        "title": "The Moon in the Barrel",
+        "category": "Wise Men of Chełm (Folk Folly)",
+        "anecdote": "One night, the elders of Chełm looked into a water barrel and saw the moon reflecting in the water. Terrified that the moon had fallen from the heavens, they hastily hammered a lid onto the barrel to preserve the town's light. The next morning, when they eagerly pried off the lid, the moon was gone. 'Alas!' cried the town sage. 'Someone has broken in and stolen our moon!'",
+        "analysis": "Exemplifies Chełmite hyper-literalism and pseudo-deductive reasoning: attempting to solve a non-existent dilemma through meticulous logic that results in absolute absurdity."
+    },
+    {
+        "title": "The Soup and the Coat",
+        "category": "Hershele of Ostropol (Trickster Satire)",
+        "anecdote": "Hershele arrived at a wealthy man's banquet in threadbare rags, and the servants turned him away into the street. Hershele went home, borrowed an opulent velvet coat, and returned. This time, the host bowed and seated him at the head of the table. When the rich chicken soup was served, Hershele dipped the embroidered sleeve of his coat into the bowl. 'Hershele, what are you doing?' gasped the host. Hershele smiled: 'I am feeding my coat! When I came as myself, you shut the door. It was the coat you invited to dinner, so the coat shall eat.'",
+        "analysis": "Classic anti-establishment subversive wit: the trickster uses absurd literalism to expose superficial social hierarchy and unearned wealth."
+    },
+    {
+        "title": "The Two Men Down the Chimney",
+        "category": "Talmudic & Rabbinic Paradox",
+        "anecdote": "A student asks a rabbi to test his logical acumen. The rabbi asks: 'Two men fall down a chimney. One comes out with a clean face; the other comes out with soot on his face. Which one washes his face?'\nThe student answers: 'The dirty one, of course!'\n'Wrong,' says the rabbi. 'The dirty one looks at the clean one and assumes his own face is clean. The clean one looks at the dirty one, assumes his face is dirty, and washes.'\nThe student says: 'Ah! So the clean one washes!'\n'Wrong again,' sighs the rabbi. 'How can two men fall down the same chimney and one be clean while the other is dirty? Your whole question is flawed.'",
+        "analysis": "Illustrates Talmudic pilpul deconstruction: challenging the implicit premise of a query rather than accepting a false dichotomy."
+    },
+    {
+        "title": "Rabinovich and the Leaflets",
+        "category": "Soviet Dissident Anekdoty",
+        "anecdote": "During the height of Soviet repression, Rabinovich is arrested in Red Square handing out leaflets to passersby. At the KGB headquarters, the interrogator confiscates the leaflets and discovers they are completely blank sheets of paper. 'What is the meaning of this?' yells the officer. 'Why are these blank?' Rabinovich shrugs: 'What is there to write? Everyone already knows.'",
+        "analysis": "Subversive political irony: weaponizing silence and universal shared despair against a totalitarian censorship apparatus."
+    },
+    {
+        "title": "The Telegram from Paris",
+        "category": "Assimilation & Code-Switching",
+        "anecdote": "A young immigrant who made a fortune in New York travels to Paris and sends a one-word telegram to his traditional mother back in Brooklyn: 'START!'\nThe mother panics, calls the entire family, and weeps. The rabbi comes over and asks, 'Why are you weeping?'\nThe mother sobs: 'He writes START! That means: Start worrying!'",
+        "analysis": "Reflects the quintessential cultural reflex of fatalistic anticipation: assuming that any change of status or departure portends inevitable misfortune."
+    }
+]
+
+def cmd_anecdote(topic=None):
+    import random
+    candidates = CURATED_ANECDOTES
+    if topic:
+        t_clean = topic.lower()
+        candidates = [a for a in CURATED_ANECDOTES if t_clean in a['title'].lower() or t_clean in a['category'].lower()]
+        if not candidates:
+            candidates = CURATED_ANECDOTES
+            
+    chosen = random.choice(candidates)
+    
+    out = Text()
+    out.append(f"CATEGORY: {chosen['category']}\n\n", style="bold cyan")
+    out.append(f"\"{chosen['anecdote']}\"\n\n", style="white")
+    out.append(f"FOLKLORIC & COMEDIC ANALYSIS:\n", style="bold yellow")
+    out.append(f"• {chosen['analysis']}\n", style="dim white")
+    
+    console.print(Panel(out, title=f"[bold green]Corpus Anecdote: {chosen['title']}[/bold green]", box=box.ROUNDED))
+
+# --- COMMAND 9: INTERACTIVE EXPLORER ---
+def cmd_explore():
+    console.print(Panel("[bold cyan]Corpus of Jewish Humor: Interactive Explorer TUI[/bold cyan]\nType 'catalog', 'archetypes', 'analyze', 'anecdote', 'search <kw>', 'read <title>', or 'quit'", box=box.ROUNDED))
+    while True:
+        try:
+            cmd_input = console.input("[bold yellow]jhc>[/bold yellow] ").strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[dim]Exiting explorer.[/dim]")
+            break
+            
+        if not cmd_input or cmd_input in ["exit", "quit", "q"]:
+            console.print("[dim]Goodbye![/dim]")
+            break
+            
+        parts = cmd_input.split(maxsplit=1)
+        sub = parts[0].lower()
+        arg = parts[1] if len(parts) > 1 else ""
+        
+        if sub == "catalog":
+            cmd_catalog()
+        elif sub == "archetypes":
+            cmd_archetypes()
+        elif sub == "analyze":
+            cmd_analyze()
+        elif sub == "anecdote":
+            cmd_anecdote(arg)
+        elif sub == "search":
+            if arg:
+                cmd_search(arg)
+            else:
+                console.print("[red]Usage: search <query>[/red]")
+        elif sub == "read":
+            if arg:
+                cmd_read(arg)
+            else:
+                console.print("[red]Usage: read <article_title_or_id>[/red]")
+        elif sub == "harvest":
+            if arg:
+                cmd_harvest(arg)
+            else:
+                console.print("[red]Usage: harvest <wikipedia_title>[/red]")
+        else:
+            console.print(f"[red]Unknown command: '{sub}'. Try: catalog, archetypes, search, analyze, anecdote, read, harvest, quit[/red]")
+
+# --- COMMAND 10: EMBEDDED WEB SERVER ---
+def cmd_serve(port=8000):
+    import http.server
+    import socketserver
+    import urllib.parse
+    
+    class CorpusHandler(http.server.SimpleHTTPRequestHandler):
+        def do_GET(self):
+            parsed = urllib.parse.urlparse(self.path)
+            path = parsed.path
+            params = urllib.parse.parse_qs(parsed.query)
+            
+            if path == "/api/catalog":
+                conn = get_connection()
+                cur = conn.cursor()
+                cur.execute("SELECT id, title, word_count, char_count, summary FROM articles ORDER BY word_count DESC")
+                data = [{"id": r[0], "title": r[1], "words": r[2], "chars": r[3], "summary": r[4]} for r in cur.fetchall()]
+                conn.close()
+                self.send_json(data)
+            elif path == "/api/archetypes":
+                conn = get_connection()
+                cur = conn.cursor()
+                cur.execute("SELECT term, category, definition FROM archetypes_and_terms")
+                data = [{"term": r[0], "category": r[1], "definition": r[2]} for r in cur.fetchall()]
+                conn.close()
+                self.send_json(data)
+            elif path == "/api/search":
+                q = params.get("q", [""])[0]
+                conn = get_connection()
+                ensure_fts(conn)
+                cur = conn.cursor()
+                clean_q = q.strip()
+                if clean_q and " " not in clean_q and not clean_q.endswith("*"):
+                    clean_q = f"{clean_q}*"
+                try:
+                    cur.execute("""
+                        SELECT article_title, section_title, bm25(sections_fts) as rank,
+                               snippet(sections_fts, 2, '<mark>', '</mark>', '...', 25)
+                        FROM sections_fts WHERE sections_fts MATCH ? ORDER BY rank ASC LIMIT 8
+                    """, (clean_q,))
+                    results = [{"article": r[0], "section": r[1], "rank": r[2], "snippet": r[3]} for r in cur.fetchall()]
+                except Exception:
+                    results = []
+                conn.close()
+                self.send_json(results)
+            elif path == "/api/anecdote":
+                import random
+                self.send_json(random.choice(CURATED_ANECDOTES))
+            elif path in ["/", "/index.html"]:
+                self.send_html()
+            else:
+                self.send_error(404, "Endpoint not found")
+                
+        def send_json(self, payload):
+            encoded = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(encoded)
+            
+        def send_html(self):
+            html = '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Corpus of Jewish Humor Explorer</title>
+    <style>
+        :root { --bg: #0a0e17; --panel: #111827; --card: #172033; --border: #1f2937; --cyan: #38bdf8; --amber: #fbbf24; --text: #f9fafb; --muted: #9ca3af; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; }
+        .header { border-bottom: 2px solid var(--border); padding-bottom: 16px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; }
+        h1 { margin: 0; font-size: 24px; color: var(--cyan); }
+        .search-box { margin-bottom: 24px; }
+        input { width: 100%; max-width: 600px; padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--text); font-size: 16px; outline: none; }
+        input:focus { border-color: var(--cyan); }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+        .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+        .card h3 { margin-top: 0; color: var(--amber); }
+        mark { background: rgba(56, 189, 248, 0.3); color: #fff; padding: 2px 4px; border-radius: 4px; }
+        .badge { display: inline-block; padding: 4px 8px; border-radius: 4px; background: rgba(56, 189, 248, 0.15); color: var(--cyan); font-size: 12px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>Corpus of Jewish Humor</h1>
+            <p style="margin: 4px 0 0; color: var(--muted); font-size: 14px;">Interactive NLP &amp; Folklore Research Portal</p>
+        </div>
+        <div class="badge">SQLite FTS5 Online</div>
+    </div>
+    <div class="search-box">
+        <input type="text" id="query" placeholder="Search FTS5 corpus (e.g. 'soup', 'logic', 'rabbi', 'theatre')..." onkeyup="if(event.key === 'Enter') doSearch()">
+    </div>
+    <div id="results" class="grid"></div>
+    <script>
+        async function doSearch() {
+            const q = document.getElementById('query').value;
+            const res = await fetch('/api/search?q=' + encodeURIComponent(q));
+            const data = await res.json();
+            const container = document.getElementById('results');
+            if (data.length === 0) {
+                container.innerHTML = '<p style="color:var(--muted)">No matches found.</p>';
+                return;
+            }
+            container.innerHTML = data.map(item => `
+                <div class="card">
+                    <span class="badge">${item.article}</span>
+                    <h3 style="margin: 8px 0;">${item.section}</h3>
+                    <p style="color: var(--muted); font-size: 14px; line-height: 1.4;">"...${item.snippet}..."</p>
+                </div>
+            `).join('');
+        }
+        // Initial load with popular topic
+        document.getElementById('query').value = 'soup';
+        doSearch();
+    </script>
+</body>
+</html>'''
+            encoded = html.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+    console.print(f"[bold green]Starting Corpus Web Explorer on http://localhost:{port}[/bold green]")
+    console.print("[dim]Press Ctrl+C to stop the server.[/dim]")
+    with socketserver.TCPServer(("", port), CorpusHandler) as httpd:
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            console.print("\n[dim]Server stopped.[/dim]")
+
 def main():
     parser = argparse.ArgumentParser(description="Corpus of Jewish Humor: Research & NLP Suite")
     subparsers = parser.add_subparsers(dest="command")
@@ -419,6 +652,15 @@ def main():
     p_export.add_argument("--format", choices=["json", "csv", "markdown"], default="json")
     p_export.add_argument("--output", help="Custom output file path")
 
+    
+    p_anecdote = subparsers.add_parser("anecdote", help="Display a curated folk joke, parable, or anecdote")
+    p_anecdote.add_argument("--topic", help="Filter anecdotes by keyword or category")
+    
+    subparsers.add_parser("explore", help="Launch interactive TUI corpus explorer")
+    
+    p_serve = subparsers.add_parser("serve", help="Launch embedded local web explorer & REST API")
+    p_serve.add_argument("--port", type=int, default=8000, help="Port to serve on (default: 8000)")
+
     args = parser.parse_args()
     if args.command == "catalog":
         cmd_catalog()
@@ -434,6 +676,13 @@ def main():
         cmd_read(args.target)
     elif args.command == "export":
         cmd_export(fmt=args.format, output_path=args.output)
+    
+    elif args.command == "anecdote":
+        cmd_anecdote(topic=args.topic)
+    elif args.command == "explore":
+        cmd_explore()
+    elif args.command == "serve":
+        cmd_serve(port=args.port)
     else:
         cmd_catalog()
 

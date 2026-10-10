@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jewish-humor-corpus"
+version = "0.2.0"
+description = "A structured computational and cultural NLP corpus documenting the history, archetypes, and narrative structures of Jewish humor."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+    { name = "ajejfiejof" }
+]
+dependencies = [
+    "rich>=13.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/ajejfiejof/jewish-humor-corpus"
+Repository = "https://github.com/ajejfiejof/jewish-humor-corpus.git"
+
+[project.scripts]
+jhc = "cli:main"
+jewish-humor-corpus = "cli:main"
+
+[tool.setuptools]
+py-modules = ["cli", "demo"]
