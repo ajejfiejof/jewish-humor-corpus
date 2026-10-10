@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jewish-humor-corpus"
-version = "0.3.0"
-description = "A comprehensive computational and cultural NLP corpus documenting the history, archetypes, and narrative structures of Jewish humor across Ashkenazi, Sephardic, Talmudic, Soviet, and Modern traditions."
+version = "0.4.0"
+description = "A comprehensive computational linguistics, folklore research, and ML dataset suite for Jewish humor with FTS5, semantic vector search, primary joke registries, and instruction tuning exports."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
@@ -14,6 +14,7 @@ authors = [
 ]
 dependencies = [
     "rich>=13.0.0",
+    "pandas>=1.3.0",
 ]
 
 [project.urls]

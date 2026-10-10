@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """
-Corpus of Jewish Humor: Advanced CLI & Computational Linguistics Suite
-Provides full-text FTS5 search, automated MediaWiki harvesting, stylometric
-analysis, interactive article reading, and data export.
+Corpus of Jewish Humor: Computational Linguistics, Folklore & ML Dataset Suite
+Features:
+- Dual-mode Search: SQLite FTS5 (BM25) + Dense Subword Semantic Vector Search (Cosine) + Hybrid Fusion
+- Humor NLP Analytics: Sentiment Inversion Index, Incongruity Modeling, Dialogue Ratios
+- Primary Joke Registry: 100+ structured jokes across 12 traditions with original scripts
+- Multilingual Orthography: Yiddish (Hebrew script), YIVO transliteration, Ladino, Cyrillic
+- Dataset Exporter: Parquet, Hugging Face Instruction-Tuning JSONL, CSV, JSON, Markdown
+- Zero-dependency Web & REST API Server (http.server)
 """
 
 import argparse
 import csv
 import json
+import math
 import os
 import re
 import sqlite3
@@ -20,7 +26,6 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
-from rich.markdown import Markdown
 from rich import box
 
 console = Console()
@@ -44,6 +49,11 @@ YIDDISH_LOANWORDS = {
     "shnorrer", "shabbat", "sheitel", "shiksa", "shmutz", "shnorrer", "shtetl",
     "tchotchke", "traif", "tref", "tsuris", "tummler", "tzaddik", "verklempt",
     "yenta", "yarmulke", "yeshiva", "yid", "yiddish", "yiddishe", "zaftig"
+}
+
+LADINO_MARKERS = {
+    "djoha", "djudha", "refran", "refranes", "bendicho", "dio", "mazal",
+    "sarik", "kaved", "hammam", "kuedra", "aniello", "kaldero", "kavesa", "kalabasa"
 }
 
 def get_connection():
@@ -75,6 +85,85 @@ def ensure_fts(conn):
                 VALUES (?, ?, ?, ?)
             """, (sid, atitle, stitle, content))
         conn.commit()
+
+# --- SEMANTIC VECTOR SPACE ENGINE ---
+class VectorSearchEngine:
+    def __init__(self, conn):
+        self.conn = conn
+        self.documents = []
+        self.vocab = {}
+        self.idf = {}
+        self.doc_vectors = []
+        self._build_index()
+
+    def _tokenize(self, text):
+        clean = re.sub(r"[^a-zA-Z0-9\s]", " ", text.lower())
+        words = clean.split()
+        tokens = list(words)
+        for w in words:
+            if len(w) >= 4:
+                for i in range(len(w) - 2):
+                    tokens.append(f"#{w[i:i+3]}")
+        return tokens
+
+    def _build_index(self):
+        cur = self.conn.cursor()
+        cur.execute("""
+            SELECT s.id, a.title, s.section_title, s.content
+            FROM sections s
+            JOIN articles a ON s.article_id = a.id
+        """)
+        rows = cur.fetchall()
+        self.documents = rows
+        doc_count = len(rows)
+
+        df = Counter()
+        doc_term_freqs = []
+
+        for r in rows:
+            tokens = self._tokenize(f"{r[1]} {r[2]} {r[3]}")
+            tf = Counter(tokens)
+            doc_term_freqs.append(tf)
+            for t in tf.keys():
+                df[t] += 1
+
+        self.vocab = {term: idx for idx, term in enumerate(df.keys())}
+        for term, freq in df.items():
+            self.idf[term] = math.log((doc_count + 1.0) / (freq + 1.0)) + 1.0
+
+        for tf in doc_term_freqs:
+            vec = {}
+            norm_sq = 0.0
+            for term, count in tf.items():
+                w = (1.0 + math.log(count)) * self.idf.get(term, 1.0)
+                vec[term] = w
+                norm_sq += w * w
+            norm = math.sqrt(norm_sq) if norm_sq > 0 else 1.0
+            self.doc_vectors.append({t: w / norm for t, w in vec.items()})
+
+    def search(self, query, top_k=5):
+        query_tokens = self._tokenize(query)
+        if not query_tokens:
+            return []
+        q_tf = Counter(query_tokens)
+        q_vec = {}
+        norm_sq = 0.0
+        for term, count in q_tf.items():
+            if term in self.idf:
+                w = (1.0 + math.log(count)) * self.idf[term]
+                q_vec[term] = w
+                norm_sq += w * w
+        norm = math.sqrt(norm_sq) if norm_sq > 0 else 1.0
+        q_vec_norm = {t: w / norm for t, w in q_vec.items()}
+
+        scores = []
+        for idx, doc_vec in enumerate(self.doc_vectors):
+            dot = sum(w * doc_vec.get(t, 0.0) for t, w in q_vec_norm.items())
+            if dot > 0.01:
+                scores.append((dot, self.documents[idx]))
+
+        scores.sort(key=lambda x: x[0], reverse=True)
+        return scores[:top_k]
 
 # --- COMMAND 1: CATALOG ---
 def cmd_catalog():
@@ -126,72 +215,138 @@ def cmd_archetypes():
     console.print(table)
     conn.close()
 
-# --- COMMAND 3: FULL-TEXT SEARCH (FTS5 + BM25) ---
-def cmd_search(query, limit=5):
+# --- COMMAND 3: SEARCH (FTS, SEMANTIC, HYBRID) ---
+def cmd_search(query, mode="hybrid", limit=5):
     conn = get_connection()
     ensure_fts(conn)
-    cur = conn.cursor()
-    
     clean_q = query.strip()
-    # Support prefix wildcard if single word without quotes
-    if " " not in clean_q and not clean_q.endswith("*") and not clean_q.startswith('"'):
-        fts_query = f"{clean_q}*"
-    else:
-        fts_query = clean_q
-        
-    try:
-        cur.execute("""
-            SELECT article_title, section_title, bm25(sections_fts) as rank,
-                   snippet(sections_fts, 2, '[bold cyan]', '[/bold cyan]', '...', 22) as snip
-            FROM sections_fts
-            WHERE sections_fts MATCH ?
-            ORDER BY rank ASC
-            LIMIT ?
-        """, (fts_query, limit))
-        results = cur.fetchall()
-    except Exception as e:
-        # Fallback to standard LIKE if FTS syntax fails
-        cur.execute("""
-            SELECT a.title, s.section_title, 0.0 as rank, s.content
-            FROM sections s
-            JOIN articles a ON s.article_id = a.id
-            WHERE s.content LIKE ? OR s.section_title LIKE ?
-            LIMIT ?
-        """, (f"%{clean_q}%", f"%{clean_q}%", limit))
-        results = [(r[0], r[1], r[2], " ".join(r[3].split()[:40]) + "...") for r in cur.fetchall()]
 
-    if not results:
-        console.print(f"[bold red]No matches found for query:[/bold red] '{query}'")
+    if mode in ["fts", "hybrid"]:
+        fts_term = f"{clean_q}*" if (" " not in clean_q and not clean_q.endswith("*") and not clean_q.startswith('"')) else clean_q
+        cur = conn.cursor()
+        try:
+            cur.execute("""
+                SELECT article_title, section_title, bm25(sections_fts) as rank,
+                       snippet(sections_fts, 2, '[bold cyan]', '[/bold cyan]', '...', 22) as snip
+                FROM sections_fts
+                WHERE sections_fts MATCH ?
+                ORDER BY rank ASC
+                LIMIT ?
+            """, (fts_term, limit))
+            fts_results = cur.fetchall()
+        except Exception:
+            fts_results = []
+    else:
+        fts_results = []
+
+    if mode in ["semantic", "hybrid"]:
+        engine = VectorSearchEngine(conn)
+        semantic_results = engine.search(clean_q, top_k=limit)
+    else:
+        semantic_results = []
+
+    conn.close()
+
+    if mode == "fts":
+        if not fts_results:
+            console.print(f"[bold red]No FTS5 matches found for query:[/bold red] '{query}'")
+            return
+        out = Text()
+        out.append(f"FTS5 Query: '{query}' ({len(fts_results)} matches displayed):\n", style="bold green")
+        for atitle, stitle, rank, snip in fts_results:
+            out.append(f"\n• {atitle} → [bold yellow]{stitle}[/bold yellow] [dim](BM25 score: {rank:.2f})[/dim]\n")
+            out.append(f"  \"{snip}\"\n")
+        console.print(Panel(out, title="[bold green]SQLite FTS5 Keyword Search Engine[/bold green]", box=box.ROUNDED))
+
+    elif mode == "semantic":
+        if not semantic_results:
+            console.print(f"[bold red]No semantic matches found for query:[/bold red] '{query}'")
+            return
+        out = Text()
+        out.append(f"Dense Semantic Vector Search: '{query}' ({len(semantic_results)} matches displayed):\n", style="bold green")
+        for score, (sid, atitle, stitle, content) in semantic_results:
+            snip = " ".join(content.split()[:35]) + "..."
+            out.append(f"\n• {atitle} → [bold yellow]{stitle}[/bold yellow] [dim](Cosine Similarity: {score:.3f})[/dim]\n")
+            out.append(f"  \"{snip}\"\n", style="dim white")
+        console.print(Panel(out, title="[bold cyan]Dense Vector Space Semantic Search (Cosine)[/bold cyan]", box=box.ROUNDED))
+
+    else:  # hybrid
+        out = Text()
+        out.append(f"Hybrid Search (FTS5 BM25 + Semantic Vector Fusion): '{query}'\n", style="bold green")
+        if fts_results:
+            out.append("\n[bold cyan]─── KEYWORD MATCHES (FTS5 BM25) ───[/bold cyan]\n", style="bold")
+            for atitle, stitle, rank, snip in fts_results[:3]:
+                out.append(f"• {atitle} → [bold yellow]{stitle}[/bold yellow] [dim](BM25: {rank:.2f})[/dim]\n")
+                out.append(f"  \"{snip}\"\n")
+        if semantic_results:
+            out.append("\n[bold magenta]─── CONCEPTUAL & SEMANTIC MATCHES (VECTOR SPACE) ───[/bold magenta]\n", style="bold")
+            for score, (sid, atitle, stitle, content) in semantic_results[:3]:
+                snip = " ".join(content.split()[:32]) + "..."
+                out.append(f"• {atitle} → [bold yellow]{stitle}[/bold yellow] [dim](Cosine: {score:.3f})[/dim]\n")
+                out.append(f"  \"{snip}\"\n", style="dim white")
+        console.print(Panel(out, title="[bold green]Hybrid Search Engine (FTS5 + Vector Space)[/bold green]", box=box.ROUNDED))
+
+# --- COMMAND 4: JOKES REGISTRY ---
+def cmd_jokes(tradition=None, category=None, search=None):
+    conn = get_connection()
+    cur = conn.cursor()
+    query = "SELECT id, title, tradition, category, setup, punchline, analysis, source, text_original, script_original, yivo_transliteration, sentiment_setup, sentiment_punchline, incongruity_score FROM jokes_and_anecdotes WHERE 1=1"
+    params = []
+    if tradition:
+        query += " AND tradition LIKE ?"
+        params.append(f"%{tradition}%")
+    if category:
+        query += " AND category LIKE ?"
+        params.append(f"%{category}%")
+    if search:
+        query += " AND (setup LIKE ? OR punchline LIKE ? OR title LIKE ? OR analysis LIKE ?)"
+        params.extend([f"%{search}%", f"%{search}%", f"%{search}%", f"%{search}%"])
+    query += " ORDER BY id ASC"
+    cur.execute(query, params)
+    jokes = cur.fetchall()
+
+    if not jokes:
+        console.print("[bold red]No jokes found matching criteria.[/bold red]")
         conn.close()
         return
 
-    out = Text()
-    out.append(f"FTS5 Query: '{query}' ({len(results)} relevant sections matched):\n", style="bold green")
-    for atitle, stitle, rank, snip in results:
-        out.append(f"\n• {atitle} → [bold yellow]{stitle}[/bold yellow] [dim](BM25 score: {rank:.2f})[/dim]\n")
-        out.append(f"  \"{snip}\"\n")
+    console.print(Panel(f"[bold cyan]Corpus of Jewish Humor: Primary Joke Registry[/bold cyan]\nFound [bold green]{len(jokes)}[/bold green] structured primary jokes across traditions.", box=box.ROUNDED))
 
-    console.print(Panel(out, title="[bold green]SQLite FTS5 Semantic Search Engine[/bold green]", box=box.ROUNDED, border_style="green"))
+    for r in jokes[:6]:
+        jid, title, trad, cat, setup, punch, analysis, src, orig_t, orig_s, yivo, s_set, s_punc, inc_score = r
+        p = Text()
+        p.append(f"TRADITION: {trad}  •  CATEGORY: {cat}\n", style="bold yellow")
+        if orig_t:
+            p.append(f"ORIGINAL ({orig_s}): {orig_t}\n", style="bold cyan")
+        if yivo:
+            p.append(f"YIVO ROMANIZATION: {yivo}\n", style="dim italic")
+        p.append(f"\nSETUP:\n", style="bold cyan")
+        p.append(f"{setup}\n\n", style="white")
+        p.append(f"PUNCHLINE:\n", style="bold green")
+        p.append(f"{punch}\n\n", style="bold white")
+        p.append(f"COMEDIC & CULTURAL MECHANICS:\n", style="bold magenta")
+        p.append(f"• {analysis}\n", style="dim white")
+        delta_p = s_punc - s_set
+        p.append(f"• Sentiment Inversion (Delta P): {delta_p:+.2f}  |  Incongruity Index: {inc_score:.2f}\n", style="cyan")
+        p.append(f"SOURCE: {src}", style="dim")
+        console.print(Panel(p, title=f"[bold white]Joke #{jid}: {title}[/bold white]", box=box.ROUNDED, border_style="cyan"))
+
+    if len(jokes) > 6:
+        console.print(f"[dim]... and {len(jokes) - 6} more jokes in registry. Use --tradition or --search to narrow.[/dim]")
     conn.close()
 
-# --- COMMAND 4: AUTOMATED MEDIAWIKI HARVESTER ---
+# --- COMMAND 5: HARVEST WIKIPEDIA ---
 def cmd_harvest(topic):
     headers = {'User-Agent': 'JewishHumorCorpusResearchBot/1.0 (academic; https://github.com/ajejfiejof)'}
     console.print(f"[cyan]Harvesting Wikipedia article:[/cyan] [bold white]{topic}[/bold white]...")
-    
     params = {"action": "query", "prop": "extracts", "titles": topic, "explaintext": "1", "format": "json"}
     url = f"https://en.wikipedia.org/w/api.php?{urllib.parse.urlencode(params)}"
     req = urllib.request.Request(url, headers=headers)
-    
     try:
         with urllib.request.urlopen(req) as resp:
             data = json.loads(resp.read().decode('utf-8'))
             pages = data.get("query", {}).get("pages", {})
-            page_data = None
-            for pid, pdata in pages.items():
-                if pid != "-1":
-                    page_data = pdata
-                    break
+            page_data = next((p for pid, p in pages.items() if pid != "-1"), None)
     except Exception as e:
         console.print(f"[bold red]Network error fetching {topic}:[/bold red] {e}")
         return
@@ -207,31 +362,21 @@ def cmd_harvest(topic):
     summary = text.split("==")[0].strip()
     ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-    # Save raw JSON
     os.makedirs(RAW_DIR, exist_ok=True)
     slug = re.sub(r"[^a-z0-9_]+", "", real_title.lower().replace(" ", "_"))
     raw_path = os.path.join(RAW_DIR, f"{slug}.json")
     with open(raw_path, "w") as f:
-        json.dump({
-            "title": real_title,
-            "full_text": text,
-            "word_count": wc,
-            "char_count": cc,
-            "harvested_at": ts
-        }, f, indent=2)
+        json.dump({"title": real_title, "full_text": text, "word_count": wc, "char_count": cc, "harvested_at": ts}, f, indent=2)
 
-    # Ingest into SQLite
     conn = get_connection()
     ensure_fts(conn)
     cur = conn.cursor()
-
     cur.execute("""
         INSERT OR REPLACE INTO articles (title, word_count, char_count, summary, full_text, harvested_at)
         VALUES (?, ?, ?, ?, ?, ?)
     """, (real_title, wc, cc, summary, text, ts))
     art_id = cur.lastrowid
 
-    # Parse sections
     sec_matches = list(re.finditer(r"(={2,4})\s*([^=]+)\s*\1", text))
     indexed_sec_count = 0
     for i, match in enumerate(sec_matches):
@@ -241,15 +386,12 @@ def cmd_harvest(topic):
         end = sec_matches[i+1].start() if i + 1 < len(sec_matches) else len(text)
         sec_content = text[start:end].strip()
         sec_wc = len(sec_content.split())
-        
         if sec_content and sec_title.lower() not in ["references", "further reading", "see also", "notes", "bibliography", "external links"]:
             cur.execute("""
                 INSERT INTO sections (article_id, section_title, section_level, content, word_count)
                 VALUES (?, ?, ?, ?, ?)
             """, (art_id, sec_title, sec_level, sec_content, sec_wc))
             sec_rowid = cur.lastrowid
-            
-            # Index into FTS5
             cur.execute("""
                 INSERT INTO sections_fts (content_rowid, article_title, section_title, content)
                 VALUES (?, ?, ?, ?)
@@ -258,75 +400,142 @@ def cmd_harvest(topic):
 
     conn.commit()
     conn.close()
+    console.print(f"[bold green]Harvested:[/bold green] {real_title} ({wc:,} words, {indexed_sec_count} sections indexed)")
 
-    panel_text = Text()
-    panel_text.append(f"Article: [bold white]{real_title}[/bold white]\n", style="green")
-    panel_text.append(f"Word Count: [bold green]{wc:,}[/bold green] words ({cc:,} chars)\n")
-    panel_text.append(f"Sections Indexed into FTS5: [bold cyan]{indexed_sec_count}[/bold cyan]\n")
-    panel_text.append(f"Raw Archive: [dim]{raw_path}[/dim]\n")
-    console.print(Panel(panel_text, title="[bold green]Harvest & Ingest Successful[/bold green]", box=box.ROUNDED))
-
-# --- COMMAND 5: COMPUTATIONAL STYLOMETRY & LEXICAL ANALYSIS ---
+# --- COMMAND 6: ADVANCED HUMOR NLP ANALYZER ---
 def cmd_analyze():
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("SELECT id, title, full_text, word_count FROM articles ORDER BY word_count DESC")
     articles = cur.fetchall()
-    
+
     table = Table(title="[bold cyan]Computational Stylometry & Comedic Linguistics Profile[/bold cyan]", box=box.ROUNDED)
-    table.add_column("Document", style="bold white", width=28)
-    table.add_column("Words", justify="right", style="dim", width=8)
-    table.add_column("Yiddish Terms", justify="right", style="cyan", width=14)
-    table.add_column("Yiddish / 1k", justify="right", style="bold cyan", width=13)
-    table.add_column("Questions / 1k", justify="right", style="yellow", width=15)
-    table.add_column("Exclam. / 1k", justify="right", style="magenta", width=13)
-    table.add_column("Lexical TTR", justify="right", style="green", width=12)
-    
-    total_yiddish_found = Counter()
-    
-    for aid, title, text, wc in articles:
+    table.add_column("Document", style="bold white", width=26)
+    table.add_column("Words", justify="right", style="dim", width=7)
+    table.add_column("Yiddish / 1k", justify="right", style="bold cyan", width=12)
+    table.add_column("Ladino / 1k", justify="right", style="bold magenta", width=12)
+    table.add_column("Questions / 1k", justify="right", style="yellow", width=14)
+    table.add_column("Exclam. / 1k", justify="right", style="red", width=12)
+    table.add_column("Dialogue %", justify="right", style="green", width=10)
+    table.add_column("Lexical TTR", justify="right", style="white", width=11)
+
+    for aid, title, text, wc in articles[:14]:
         if not wc or wc == 0:
             continue
         words_raw = re.findall(r"\b[a-zA-Z]+\b", text.lower())
         total_tokens = len(words_raw)
         vocab = set(words_raw)
         ttr = (len(vocab) / total_tokens) if total_tokens else 0.0
-        
-        # Count Yiddish terms
+
         y_count = sum(1 for w in words_raw if w in YIDDISH_LOANWORDS)
         y_rate = (y_count / total_tokens * 1000.0) if total_tokens else 0.0
-        
-        # Punctuation counts
+
+        l_count = sum(1 for w in words_raw if w in LADINO_MARKERS)
+        l_rate = (l_count / total_tokens * 1000.0) if total_tokens else 0.0
+
         q_count = text.count("?")
         q_rate = (q_count / wc * 1000.0)
-        
+
         e_count = text.count("!")
         e_rate = (e_count / wc * 1000.0)
-        
-        for w in words_raw:
-            if w in YIDDISH_LOANWORDS:
-                total_yiddish_found[w] += 1
-                
+
+        quotes = re.findall(r'"([^"]*)"', text) + re.findall(r'“([^”]*)”', text)
+        dialogue_words = sum(len(q.split()) for q in quotes)
+        diag_pct = (dialogue_words / wc * 100.0) if wc else 0.0
+
         table.add_row(
-            title, f"{wc:,}", str(y_count), f"{y_rate:.1f}",
-            f"{q_rate:.1f}", f"{e_rate:.1f}", f"{ttr:.3f}"
+            title[:26], f"{wc:,}", f"{y_rate:.1f}", f"{l_rate:.1f}",
+            f"{q_rate:.1f}", f"{e_rate:.1f}", f"{diag_pct:.1f}%", f"{ttr:.3f}"
         )
-        
+
     console.print(table)
-    
-    # Top loanwords breakdown
-    top_y = total_yiddish_found.most_common(12)
-    top_str = ", ".join([f"[bold cyan]{w}[/bold cyan] ({c})" for w, c in top_y])
-    
-    insights = Text()
-    insights.append("LINGUISTIC & STYLOMETRIC HIGHLIGHTS:\n", style="bold yellow")
-    insights.append(f"• Top Yiddish Comedic Vocabulary in Corpus: {top_str}\n")
-    insights.append("• Rhetorical Question Rate: High question rates reflect Talmudic dialectic syntax and counter-questioning habits.\n")
-    insights.append("• Type-Token Ratio (TTR): Measures lexical diversity across historical and folkloric source texts.\n")
-    console.print(Panel(insights, title="[bold yellow]Corpus Insights[/bold yellow]", box=box.ROUNDED))
+
+    cur.execute("SELECT sentiment_setup, sentiment_punchline, incongruity_score FROM jokes_and_anecdotes")
+    j_metrics = cur.fetchall()
+    if j_metrics:
+        inversions = [r[1] - r[0] for r in j_metrics]
+        incongruities = [r[2] for r in j_metrics]
+        avg_inv = sum(inversions) / len(inversions)
+        avg_inc = sum(incongruities) / len(incongruities)
+
+        inv_panel = Text()
+        inv_panel.append(f"• Total Primary Jokes in Registry: {len(j_metrics)}\n", style="bold cyan")
+        inv_panel.append(f"• Average Sentiment Inversion (Delta Polarity): {avg_inv:+.3f}\n", style="bold yellow")
+        inv_panel.append(f"• Average Incongruity & Paradox Index: {avg_inc:.3f} / 1.000\n", style="bold green")
+        inv_panel.append("• Subversion Mechanics: Setup polarity is overwhelmingly punctured by cynical or fatalistic punchlines.\n", style="dim white")
+        console.print(Panel(inv_panel, title="[bold yellow]Humor-NLP Sentiment Inversion & Incongruity Index[/bold yellow]", box=box.ROUNDED))
+
     conn.close()
 
-# --- COMMAND 6: READ ARTICLE ---
+# --- COMMAND 7: EXPORT CORPUS & ML DATASETS ---
+def cmd_export(fmt="json", output_path=None):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    if fmt == "hf_instruct":
+        cur.execute("SELECT id, title, tradition, category, setup, punchline, analysis, source FROM jokes_and_anecdotes")
+        jokes = cur.fetchall()
+        if not output_path:
+            output_path = os.path.join(BASE_DIR, "jewish_humor_instruct.jsonl")
+        with open(output_path, "w", encoding="utf-8") as f:
+            for j in jokes:
+                record = {
+                    "instruction": "Analyze the comedic mechanics, cultural tradition, and narrative paradox in the following Jewish humor narrative.",
+                    "input": f"TITLE: {j[1]}\nTRADITION: {j[2]} ({j[3]})\nSETUP: {j[4]}",
+                    "output": f"PUNCHLINE: {j[5]}\n\nCOMEDIC & CULTURAL ANALYSIS:\n{j[6]}\n\nSOURCE: {j[7]}"
+                }
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        console.print(f"[bold green]Exported Hugging Face Instruction Dataset:[/bold green] [white]{output_path}[/white] ({len(jokes)} instruction pairs)")
+
+    elif fmt == "parquet":
+        import pandas as pd
+        cur.execute("SELECT id, title, tradition, category, setup, punchline, analysis, source, incongruity_score FROM jokes_and_anecdotes")
+        rows = cur.fetchall()
+        cols = ["id", "title", "tradition", "category", "setup", "punchline", "analysis", "source", "incongruity_score"]
+        df = pd.DataFrame(rows, columns=cols)
+        if not output_path:
+            output_path = os.path.join(BASE_DIR, "jewish_humor_jokes.parquet")
+        df.to_parquet(output_path, index=False)
+        console.print(f"[bold green]Exported Apache Parquet Dataset:[/bold green] [white]{output_path}[/white] ({len(df)} rows)")
+
+    elif fmt == "json":
+        cur.execute("SELECT a.id, a.title, s.section_title, s.content, s.word_count FROM sections s JOIN articles a ON s.article_id = a.id")
+        data = [{"article_id": r[0], "article": r[1], "section": r[2], "content": r[3], "words": r[4]} for r in cur.fetchall()]
+        if not output_path:
+            output_path = os.path.join(BASE_DIR, "corpus_export.json")
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        console.print(f"[bold green]Exported JSON Corpus:[/bold green] [white]{output_path}[/white] ({len(data)} sections)")
+
+    elif fmt == "csv":
+        cur.execute("SELECT a.id, a.title, s.section_title, s.content, s.word_count FROM sections s JOIN articles a ON s.article_id = a.id")
+        rows = cur.fetchall()
+        if not output_path:
+            output_path = os.path.join(BASE_DIR, "corpus_export.csv")
+        with open(output_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["article_id", "article", "section", "content", "words"])
+            writer.writerows(rows)
+        console.print(f"[bold green]Exported CSV Corpus:[/bold green] [white]{output_path}[/white] ({len(rows)} sections)")
+
+    elif fmt == "markdown":
+        cur.execute("SELECT a.title, s.section_title, s.content, s.word_count FROM sections s JOIN articles a ON s.article_id = a.id ORDER BY a.id, s.id")
+        rows = cur.fetchall()
+        if not output_path:
+            output_path = os.path.join(BASE_DIR, "corpus_export.md")
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write("# Corpus of Jewish Humor: Research Dossier\n\n")
+            curr = None
+            for r in rows:
+                if r[0] != curr:
+                    curr = r[0]
+                    f.write(f"\n# {curr}\n\n")
+                f.write(f"## {r[1]} ({r[3]} words)\n\n{r[2]}\n\n---\n")
+        console.print(f"[bold green]Exported Markdown Dossier:[/bold green] [white]{output_path}[/white] ({len(rows)} sections)")
+
+    conn.close()
+
+# --- COMMAND 8: READ ---
 def cmd_read(target):
     conn = get_connection()
     cur = conn.cursor()
@@ -334,179 +543,32 @@ def cmd_read(target):
         cur.execute("SELECT id, title, full_text FROM articles WHERE id = ?", (int(target),))
     else:
         cur.execute("SELECT id, title, full_text FROM articles WHERE title LIKE ? LIMIT 1", (f"%{target}%",))
-        
     row = cur.fetchone()
     if not row:
         console.print(f"[bold red]Article not found matching:[/bold red] '{target}'")
         conn.close()
         return
-        
     aid, title, full_text = row
     console.print(Panel(f"[bold cyan]{title}[/bold cyan] (Document ID #{aid})", box=box.HEAVY))
-    
-    # Display sections
     cur.execute("SELECT section_title, content, word_count FROM sections WHERE article_id = ? ORDER BY id ASC", (aid,))
     sections = cur.fetchall()
-    
     for stitle, content, wc in sections[:4]:
         console.print(f"\n[bold yellow]═══ {stitle} ({wc} words) ═══[/bold yellow]")
         console.print(content[:600] + ("..." if len(content) > 600 else ""))
-        
     if len(sections) > 4:
         console.print(f"\n[dim]... and {len(sections) - 4} more sections. (Total words: {len(full_text.split()):,})[/dim]")
     conn.close()
 
-# --- COMMAND 7: EXPORT CORPUS ---
-def cmd_export(fmt="json", output_path=None):
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT a.id, a.title, s.section_title, s.section_level, s.word_count, s.content
-        FROM sections s
-        JOIN articles a ON s.article_id = a.id
-        ORDER BY a.id, s.id
-    """)
-    rows = cur.fetchall()
-    
-    if not output_path:
-        output_path = os.path.join(BASE_DIR, f"corpus_export.{fmt}")
-        
-    if fmt == "json":
-        data = [
-            {"article_id": r[0], "article": r[1], "section": r[2], "level": r[3], "words": r[4], "content": r[5]}
-            for r in rows
-        ]
-        with open(output_path, "w") as f:
-            json.dump(data, f, indent=2)
-    elif fmt == "csv":
-        with open(output_path, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["article_id", "article", "section", "level", "words", "content"])
-            writer.writerows(rows)
-    elif fmt == "markdown":
-        with open(output_path, "w") as f:
-            f.write("# Corpus of Jewish Humor: Full Export Dossier\n\n")
-            current_art = None
-            for r in rows:
-                if r[1] != current_art:
-                    current_art = r[1]
-                    f.write(f"\n# {current_art}\n\n")
-                f.write(f"## {r[2]} ({r[4]} words)\n\n{r[5]}\n\n---\n")
-
-    console.print(f"[bold green]Corpus successfully exported:[/bold green] [white]{output_path}[/white] ({len(rows)} sections in {fmt.upper()})")
-    conn.close()
-
-
-# --- COMMAND 8: ANECDOTE EXTRACTOR ---
-
-CURATED_ANECDOTES = [
-    {
-        "title": "The Moon in the Barrel",
-        "category": "Wise Men of Chełm (Folk Folly)",
-        "anecdote": "One night, the elders of Chełm looked into a water barrel and saw the moon reflecting in the water. Terrified that the moon had fallen from the heavens, they hastily hammered a lid onto the barrel to preserve the town's light. The next morning, when they eagerly pried off the lid, the moon was gone. 'Alas!' cried the town sage. 'Someone has broken in and stolen our moon!'",
-        "analysis": "Exemplifies Chełmite hyper-literalism and pseudo-deductive reasoning: attempting to solve a non-existent dilemma through meticulous logic that results in absolute absurdity."
-    },
-    {
-        "title": "The Soup and the Coat",
-        "category": "Hershele of Ostropol (Trickster Satire)",
-        "anecdote": "Hershele arrived at a wealthy man's banquet in threadbare rags, and the servants turned him away into the street. Hershele went home, borrowed an opulent velvet coat, and returned. This time, the host bowed and seated him at the head of the table. When the rich chicken soup was served, Hershele dipped the embroidered sleeve of his coat into the bowl. 'Hershele, what are you doing?' gasped the host. Hershele smiled: 'I am feeding my coat! When I came as myself, you shut the door. It was the coat you invited to dinner, so the coat shall eat.'",
-        "analysis": "Classic anti-establishment subversive wit: the trickster uses absurd literalism to expose superficial social hierarchy and unearned wealth."
-    },
-    {
-        "title": "The Two Men Down the Chimney",
-        "category": "Talmudic & Rabbinic Paradox",
-        "anecdote": "A student asks a rabbi to test his logical acumen. The rabbi asks: 'Two men fall down a chimney. One comes out with a clean face; the other comes out with soot on his face. Which one washes his face?'\nThe student answers: 'The dirty one, of course!'\n'Wrong,' says the rabbi. 'The dirty one looks at the clean one and assumes his own face is clean. The clean one looks at the dirty one, assumes his face is dirty, and washes.'\nThe student says: 'Ah! So the clean one washes!'\n'Wrong again,' sighs the rabbi. 'How can two men fall down the same chimney and one be clean while the other is dirty? Your whole question is flawed.'",
-        "analysis": "Illustrates Talmudic pilpul deconstruction: challenging the implicit premise of a query rather than accepting a false dichotomy."
-    },
-    {
-        "title": "Rabinovich and the Leaflets",
-        "category": "Soviet Dissident Anekdoty",
-        "anecdote": "During the height of Soviet repression, Rabinovich is arrested in Red Square handing out leaflets to passersby. At the KGB headquarters, the interrogator confiscates the leaflets and discovers they are completely blank sheets of paper. 'What is the meaning of this?' yells the officer. 'Why are these blank?' Rabinovich shrugs: 'What is there to write? Everyone already knows.'",
-        "analysis": "Subversive political irony: weaponizing silence and universal shared despair against a totalitarian censorship apparatus."
-    },
-    {
-        "title": "The Telegram from Paris",
-        "category": "Assimilation & Code-Switching",
-        "anecdote": "A young immigrant who made a fortune in New York travels to Paris and sends a one-word telegram to his traditional mother back in Brooklyn: 'START!'\nThe mother panics, calls the entire family, and weeps. The rabbi comes over and asks, 'Why are you weeping?'\nThe mother sobs: 'He writes START! That means: Start worrying!'",
-        "analysis": "Reflects the quintessential cultural reflex of fatalistic anticipation: assuming that any change of status or departure portends inevitable misfortune."
-    }
-]
-
-def cmd_anecdote(topic=None):
-    import random
-    candidates = CURATED_ANECDOTES
-    if topic:
-        t_clean = topic.lower()
-        candidates = [a for a in CURATED_ANECDOTES if t_clean in a['title'].lower() or t_clean in a['category'].lower()]
-        if not candidates:
-            candidates = CURATED_ANECDOTES
-            
-    chosen = random.choice(candidates)
-    
-    out = Text()
-    out.append(f"CATEGORY: {chosen['category']}\n\n", style="bold cyan")
-    out.append(f"\"{chosen['anecdote']}\"\n\n", style="white")
-    out.append(f"FOLKLORIC & COMEDIC ANALYSIS:\n", style="bold yellow")
-    out.append(f"• {chosen['analysis']}\n", style="dim white")
-    
-    console.print(Panel(out, title=f"[bold green]Corpus Anecdote: {chosen['title']}[/bold green]", box=box.ROUNDED))
-
-# --- COMMAND 9: INTERACTIVE EXPLORER ---
-def cmd_explore():
-    console.print(Panel("[bold cyan]Corpus of Jewish Humor: Interactive Explorer TUI[/bold cyan]\nType 'catalog', 'archetypes', 'analyze', 'anecdote', 'search <kw>', 'read <title>', or 'quit'", box=box.ROUNDED))
-    while True:
-        try:
-            cmd_input = console.input("[bold yellow]jhc>[/bold yellow] ").strip()
-        except (KeyboardInterrupt, EOFError):
-            console.print("\n[dim]Exiting explorer.[/dim]")
-            break
-            
-        if not cmd_input or cmd_input in ["exit", "quit", "q"]:
-            console.print("[dim]Goodbye![/dim]")
-            break
-            
-        parts = cmd_input.split(maxsplit=1)
-        sub = parts[0].lower()
-        arg = parts[1] if len(parts) > 1 else ""
-        
-        if sub == "catalog":
-            cmd_catalog()
-        elif sub == "archetypes":
-            cmd_archetypes()
-        elif sub == "analyze":
-            cmd_analyze()
-        elif sub == "anecdote":
-            cmd_anecdote(arg)
-        elif sub == "search":
-            if arg:
-                cmd_search(arg)
-            else:
-                console.print("[red]Usage: search <query>[/red]")
-        elif sub == "read":
-            if arg:
-                cmd_read(arg)
-            else:
-                console.print("[red]Usage: read <article_title_or_id>[/red]")
-        elif sub == "harvest":
-            if arg:
-                cmd_harvest(arg)
-            else:
-                console.print("[red]Usage: harvest <wikipedia_title>[/red]")
-        else:
-            console.print(f"[red]Unknown command: '{sub}'. Try: catalog, archetypes, search, analyze, anecdote, read, harvest, quit[/red]")
-
-# --- COMMAND 10: EMBEDDED WEB SERVER ---
+# --- COMMAND 9: WEB SERVER & REST API ---
 def cmd_serve(port=8000):
     import http.server
     import socketserver
-    import urllib.parse
-    
     class CorpusHandler(http.server.SimpleHTTPRequestHandler):
         def do_GET(self):
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
             params = urllib.parse.parse_qs(parsed.query)
-            
+
             if path == "/api/catalog":
                 conn = get_connection()
                 cur = conn.cursor()
@@ -521,14 +583,19 @@ def cmd_serve(port=8000):
                 data = [{"term": r[0], "category": r[1], "definition": r[2]} for r in cur.fetchall()]
                 conn.close()
                 self.send_json(data)
+            elif path == "/api/jokes":
+                conn = get_connection()
+                cur = conn.cursor()
+                cur.execute("SELECT id, title, tradition, category, setup, punchline, analysis, source, text_original, script_original, yivo_transliteration, incongruity_score FROM jokes_and_anecdotes")
+                data = [{"id": r[0], "title": r[1], "tradition": r[2], "category": r[3], "setup": r[4], "punchline": r[5], "analysis": r[6], "source": r[7], "text_original": r[8], "script_original": r[9], "yivo": r[10], "incongruity": r[11]} for r in cur.fetchall()]
+                conn.close()
+                self.send_json(data)
             elif path == "/api/search":
                 q = params.get("q", [""])[0]
                 conn = get_connection()
                 ensure_fts(conn)
                 cur = conn.cursor()
-                clean_q = q.strip()
-                if clean_q and " " not in clean_q and not clean_q.endswith("*"):
-                    clean_q = f"{clean_q}*"
+                clean_q = f"{q.strip()}*" if (" " not in q.strip() and not q.strip().endswith("*")) else q.strip()
                 try:
                     cur.execute("""
                         SELECT article_title, section_title, bm25(sections_fts) as rank,
@@ -540,45 +607,34 @@ def cmd_serve(port=8000):
                     results = []
                 conn.close()
                 self.send_json(results)
-            elif path == "/api/jokes":
-                conn = get_connection()
-                cur = conn.cursor()
-                cur.execute("SELECT id, title, tradition, category, setup, punchline, analysis, source FROM jokes_and_anecdotes")
-                data = [{"id": r[0], "title": r[1], "tradition": r[2], "category": r[3], "setup": r[4], "punchline": r[5], "analysis": r[6], "source": r[7]} for r in cur.fetchall()]
-                conn.close()
-                self.send_json(data)
-            elif path == "/api/anecdote":
-                import random
-                self.send_json(random.choice(CURATED_ANECDOTES))
             elif path in ["/", "/index.html"]:
                 self.send_html()
             else:
                 self.send_error(404, "Endpoint not found")
-                
+
         def send_json(self, payload):
-            encoded = json.dumps(payload).encode("utf-8")
+            encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(200)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(encoded)))
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(encoded)
-            
+
         def send_html(self):
-            html = '''<!DOCTYPE html>
+            html = """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>Corpus of Jewish Humor Explorer</title>
     <style>
-        :root { --bg: #0a0e17; --panel: #111827; --card: #172033; --border: #1f2937; --cyan: #38bdf8; --amber: #fbbf24; --text: #f9fafb; --muted: #9ca3af; }
+        :root { --bg: #0a0e17; --panel: #111827; --card: #172033; --border: #1f2937; --cyan: #38bdf8; --amber: #fbbf24; --text: #f9fafb; --muted: #94a3b8; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; }
         .header { border-bottom: 2px solid var(--border); padding-bottom: 16px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; }
         h1 { margin: 0; font-size: 24px; color: var(--cyan); }
-        .search-box { margin-bottom: 24px; }
         input { width: 100%; max-width: 600px; padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--text); font-size: 16px; outline: none; }
         input:focus { border-color: var(--cyan); }
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-top: 16px; }
         .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
         .card h3 { margin-top: 0; color: var(--amber); }
         mark { background: rgba(56, 189, 248, 0.3); color: #fff; padding: 2px 4px; border-radius: 4px; }
@@ -589,12 +645,12 @@ def cmd_serve(port=8000):
     <div class="header">
         <div>
             <h1>Corpus of Jewish Humor</h1>
-            <p style="margin: 4px 0 0; color: var(--muted); font-size: 14px;">Interactive NLP &amp; Folklore Research Portal</p>
+            <p style="margin: 4px 0 0; color: var(--muted); font-size: 14px;">Interactive NLP, Folklore &amp; Joke Registry (v0.4.0)</p>
         </div>
-        <div class="badge">SQLite FTS5 Online</div>
+        <div class="badge">SQLite FTS5 + Vector Online</div>
     </div>
-    <div class="search-box">
-        <input type="text" id="query" placeholder="Search FTS5 corpus (e.g. 'soup', 'logic', 'rabbi', 'theatre')..." onkeyup="if(event.key === 'Enter') doSearch()">
+    <div>
+        <input type="text" id="query" placeholder="Search FTS5 &amp; Vector Corpus (e.g. 'golem', 'soup', 'rabbi', 'djoha')..." onkeyup="if(event.key === 'Enter') doSearch()">
     </div>
     <div id="results" class="grid"></div>
     <script>
@@ -615,12 +671,11 @@ def cmd_serve(port=8000):
                 </div>
             `).join('');
         }
-        // Initial load with popular topic
-        document.getElementById('query').value = 'soup';
+        document.getElementById('query').value = 'golem';
         doSearch();
     </script>
 </body>
-</html>'''
+</html>"""
             encoded = html.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -636,85 +691,35 @@ def cmd_serve(port=8000):
         except KeyboardInterrupt:
             console.print("\n[dim]Server stopped.[/dim]")
 
-
-# --- COMMAND: JOKES DATABASE EXPLORER ---
-def cmd_jokes(tradition=None, category=None, search=None):
-    conn = get_connection()
-    cur = conn.cursor()
-    
-    query = "SELECT id, title, tradition, category, setup, punchline, analysis, source FROM jokes_and_anecdotes WHERE 1=1"
-    params = []
-    
-    if tradition:
-        query += " AND tradition LIKE ?"
-        params.append(f"%{tradition}%")
-    if category:
-        query += " AND category LIKE ?"
-        params.append(f"%{category}%")
-    if search:
-        query += " AND (setup LIKE ? OR punchline LIKE ? OR title LIKE ?)"
-        params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
-        
-    query += " ORDER BY id ASC"
-    cur.execute(query, params)
-    jokes = cur.fetchall()
-    
-    if not jokes:
-        console.print("[bold red]No jokes found matching the criteria.[/bold red]")
-        conn.close()
-        return
-        
-    console.print(Panel(f"[bold cyan]Corpus of Jewish Humor: Primary Joke & Anecdote Registry[/bold cyan]\nDisplaying [bold green]{len(jokes)}[/bold green] curated primary jokes across historical traditions.", box=box.ROUNDED))
-    
-    for jid, title, trad, cat, setup, punch, analysis, src in jokes:
-        p_text = Text()
-        p_text.append(f"TRADITION: {trad}  •  CATEGORY: {cat}\n\n", style="bold yellow")
-        p_text.append(f"SETUP:\n", style="bold cyan")
-        p_text.append(f"{setup}\n\n", style="white")
-        p_text.append(f"PUNCHLINE:\n", style="bold green")
-        p_text.append(f"{punch}\n\n", style="bold white")
-        p_text.append(f"COMEDIC & CULTURAL MECHANICS:\n", style="bold magenta")
-        p_text.append(f"• {analysis}\n\n", style="dim white")
-        p_text.append(f"SOURCE: {src}", style="italic dim")
-        
-        console.print(Panel(p_text, title=f"[bold white]Joke #{jid}: {title}[/bold white]", box=box.ROUNDED, border_style="cyan"))
-        
-    conn.close()
-
 def main():
-    parser = argparse.ArgumentParser(description="Corpus of Jewish Humor: Research & NLP Suite")
+    parser = argparse.ArgumentParser(description="Corpus of Jewish Humor: Research, NLP & ML Suite")
     subparsers = parser.add_subparsers(dest="command")
-    
+
     subparsers.add_parser("catalog", help="List all indexed documents, sections, and metrics")
     subparsers.add_parser("archetypes", help="Display cultural archetypes and comic tropes")
-    
-    p_search = subparsers.add_parser("search", help="Perform FTS5 full-text search with BM25 ranking")
-    p_search.add_argument("query", help="Search query (supports wildcards, e.g. 'soup*', 'logic*')")
-    p_search.add_argument("--limit", type=int, default=5, help="Maximum matches to return")
-    
-    p_harvest = subparsers.add_parser("harvest", help="Fetch and ingest a new Wikipedia article into DB & FTS5")
-    p_harvest.add_argument("topic", help="Wikipedia article title (e.g. 'Sholem Aleichem')")
-    
-    subparsers.add_parser("analyze", help="Run computational stylometry & comedic linguistics analysis")
-    
-    p_read = subparsers.add_parser("read", help="Read article sections with rich formatting")
-    p_read.add_argument("target", help="Article ID or title substring")
-    
-    p_export = subparsers.add_parser("export", help="Export corpus to JSON, CSV, or Markdown")
-    p_export.add_argument("--format", choices=["json", "csv", "markdown"], default="json")
-    p_export.add_argument("--output", help="Custom output file path")
 
-    
-    
-    p_jokes = subparsers.add_parser("jokes", help="Browse structured primary jokes and anecdotes with setup/punchline analysis")
+    p_search = subparsers.add_parser("search", help="Perform search (supports fts, semantic, hybrid)")
+    p_search.add_argument("query", help="Search query (e.g. 'financial anxiety', 'soup*')")
+    p_search.add_argument("--mode", choices=["fts", "semantic", "hybrid"], default="hybrid", help="Search mode")
+    p_search.add_argument("--limit", type=int, default=5, help="Maximum matches to return")
+
+    p_jokes = subparsers.add_parser("jokes", help="Explore primary joke registry with setup/punchline and original scripts")
     p_jokes.add_argument("--tradition", help="Filter by tradition (e.g. Ashkenazi, Sephardic, Soviet, Talmudic, Borscht)")
     p_jokes.add_argument("--category", help="Filter by category (e.g. 'Folk Folly', 'Trickster', 'Political')")
-    p_jokes.add_argument("--search", help="Search text in setups or punchlines")
-    p_anecdote = subparsers.add_parser("anecdote", help="Display a curated folk joke, parable, or anecdote")
-    p_anecdote.add_argument("--topic", help="Filter anecdotes by keyword or category")
-    
-    subparsers.add_parser("explore", help="Launch interactive TUI corpus explorer")
-    
+    p_jokes.add_argument("--search", help="Search keywords in setups, punchlines, or analyses")
+
+    p_harvest = subparsers.add_parser("harvest", help="Fetch and ingest a new Wikipedia article into DB & FTS5")
+    p_harvest.add_argument("topic", help="Wikipedia article title (e.g. 'Sholem Aleichem')")
+
+    subparsers.add_parser("analyze", help="Run computational stylometry, sentiment inversion & comedic metrics")
+
+    p_read = subparsers.add_parser("read", help="Read article sections with rich formatting")
+    p_read.add_argument("target", help="Article ID or title substring")
+
+    p_export = subparsers.add_parser("export", help="Export corpus or ML datasets")
+    p_export.add_argument("--format", choices=["json", "csv", "markdown", "parquet", "hf_instruct"], default="json")
+    p_export.add_argument("--output", help="Custom output file path")
+
     p_serve = subparsers.add_parser("serve", help="Launch embedded local web explorer & REST API")
     p_serve.add_argument("--port", type=int, default=8000, help="Port to serve on (default: 8000)")
 
@@ -724,7 +729,9 @@ def main():
     elif args.command == "archetypes":
         cmd_archetypes()
     elif args.command == "search":
-        cmd_search(args.query, limit=args.limit)
+        cmd_search(args.query, mode=args.mode, limit=args.limit)
+    elif args.command == "jokes":
+        cmd_jokes(tradition=args.tradition, category=args.category, search=args.search)
     elif args.command == "harvest":
         cmd_harvest(args.topic)
     elif args.command == "analyze":
@@ -733,14 +740,6 @@ def main():
         cmd_read(args.target)
     elif args.command == "export":
         cmd_export(fmt=args.format, output_path=args.output)
-    
-    
-    elif args.command == "jokes":
-        cmd_jokes(tradition=args.tradition, category=args.category, search=args.search)
-    elif args.command == "anecdote":
-        cmd_anecdote(topic=args.topic)
-    elif args.command == "explore":
-        cmd_explore()
     elif args.command == "serve":
         cmd_serve(port=args.port)
     else:

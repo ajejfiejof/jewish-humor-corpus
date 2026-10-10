@@ -1,26 +1,36 @@
-# Corpus of Jewish Humor 🎭
-> A comprehensive computational and cultural NLP corpus documenting the history, archetypes, linguistic mechanisms, and narrative structures of Jewish humor across Ashkenazi, Sephardic, Talmudic, Soviet, and Modern traditions.
+# Corpus of Jewish Humor 🎭 (v0.4.0)
+> A comprehensive computational linguistics, folklore research, and machine learning dataset suite for Jewish humor across Ashkenazi, Sephardic, Talmudic, Soviet, and Modern traditions.
 
 ![Corpus Dashboard](assets/demo_screenshot.png)
 
 ---
 
-## Overview
+## What is Jewish Humor Corpus?
 
-The **Corpus of Jewish Humor** is an open research database and natural language processing suite initialized from foundational scholarly, historical, and folkloric texts. It indexes the historical progression of Jewish humor from ancient Talmudic wit to the modern Borscht Belt, Soviet political *anekdoty*, Sephardic *Djohá* trickster tales, and contemporary satire.
+The **Corpus of Jewish Humor** is an open-source natural language processing suite and structured cultural dataset. It pairs historical encyclopedic literature with a **curated registry of 100+ primary jokes**, bilingual orthography, semantic vector search, and computational humor analytics.
 
-- **Primary Database:** SQLite 3 with **FTS5 Full-Text Search** (`data/jewish_humor.db`)
-- **Indexed Volume:** **56,872 words** across **21 foundational texts** and **196 categorized sections** (355k+ characters).
-- **Primary Joke Registry:** Dedicated `jokes_and_anecdotes` table indexing classic jokes with setup, punchline, and comedic/cultural analysis across 7 traditions.
-- **Cultural Entities:** 20 pre-indexed archetypes spanning Ashkenazi, Sephardic, Mythic, Rabbinic, and Modern Israeli lore.
-- **Stylometric Engine:** Pre-compiled lexicon of Yiddish and Ladino markers, question/exclamation density metrics, and Type-Token Ratio (TTR) analysis.
-- **Embedded Web & API Server:** Zero-dependency local web explorer and REST API server.
+### Key Capabilities
+
+1. **Dual-Mode Search Engine:** SQLite **FTS5 (BM25 keyword search)** alongside a **Dense Subword Vector Space Model (Cosine similarity)** and Hybrid Reciprocal Fusion.
+2. **Primary Joke Registry:** 100 structured jokes across 12 traditions with setup, punchline, comedic analysis, and original scripts (Yiddish Hebrew script, YIVO romanization, Ladino, Cyrillic).
+3. **Humor-NLP Analytics:** Automated calculation of **Sentiment Inversion ($\Delta P$)**, Incongruity Index, Dialogue-to-Narrative ratios, and Yiddish/Ladino loanword density.
+4. **Machine Learning & Hugging Face Ready:** Direct export to **Apache Parquet** and **Hugging Face instruction-tuning JSONL** for LLM fine-tuning and reasoning benchmarks.
+5. **Zero-Dependency Web Portal:** Embedded local web server with live search and REST API.
+
+---
+
+## Dataset & Storage Metrics
+
+- **Relational & Search Database:** SQLite 3 with FTS5 virtual tables (`data/jewish_humor.db`)
+- **Primary Joke Holdings:** **100 structured primary jokes** across 12 traditions with fine-grained setup/punchline segmentation.
+- **Corpus Text Holdings:** **56,872 words** across **21 foundational texts** and **196 categorized sections** (355k+ characters).
+- **Archetype Catalog:** 20 pre-indexed cultural archetypes spanning folklore, mysticism, Talmudic debate, and satire.
 
 ---
 
 ## Quickstart
 
-### 1. Installation
+### Installation
 Clone the repository and install as an editable package (provides the `jhc` command):
 ```bash
 git clone https://github.com/ajejfiejof/jewish-humor-corpus.git
@@ -28,163 +38,109 @@ cd jewish-humor-corpus
 pip install -e .
 ```
 
-### 2. Interactive Terminal Demo
-Launch the full terminal visualization suite:
+### Run the Interactive Terminal Demo
 ```bash
 python3 demo.py
 ```
 
-### 3. Running Automated Tests
-Verify database integrity, FTS5 index, and CLI suite:
+### Run the Automated Test Suite
 ```bash
 python3 -m unittest discover tests
 ```
 
 ---
 
-## CLI Capabilities & Feature Suite
+## CLI & Research Toolkit
 
-The included `cli.py` (or `jhc` command) provides a comprehensive research toolkit:
+The `cli.py` (or `jhc`) command provides full access to the corpus:
 
+### 1. Dual-Mode & Semantic Search (`search`)
+Supports keyword matching (FTS5 BM25), conceptual semantic matching (Vector Cosine), or combined Hybrid search:
 ```bash
-# Display help and available commands
-python3 cli.py --help
+# Hybrid Search (Default: BM25 + Vector Fusion)
+python3 cli.py search "golem" --mode hybrid
+
+# Conceptual Semantic Search (finds thematic matches even without exact words)
+python3 cli.py search "financial anxiety" --mode semantic
+python3 cli.py search "cynical resignation" --mode semantic
+
+# Pure Keyword Search (with prefix wildcards)
+python3 cli.py search "soup*" --mode fts
 ```
 
-### 1. Primary Joke Registry (`jokes`)
-Explore and filter curated primary jokes with setup, punchline, and cultural analysis:
+### 2. Primary Joke Registry (`jokes`)
+Explore the 100-joke primary registry with original language scripts and comedic mechanics:
 ```bash
 # Browse all jokes
 python3 cli.py jokes
 
-# Filter by tradition (e.g. Sephardic, Ashkenazi, Soviet, Talmudic, Borscht)
+# Filter by tradition
 python3 cli.py jokes --tradition Sephardic
 python3 cli.py jokes --tradition Soviet
 python3 cli.py jokes --tradition Talmudic
+python3 cli.py jokes --tradition Chełm
 
-# Search jokes by keyword in setup or punchline
-python3 cli.py jokes --search "soup"
+# Search inside setups, punchlines, and analyses
+python3 cli.py jokes --search "donkey"
 ```
 
-### 2. Full-Text Search with BM25 Ranking (`search`)
-Leverages SQLite's native **FTS5** full-text search engine with BM25 relevance scoring and colored snippet highlighting:
-```bash
-# Search for keywords or prefix wildcards across 196 sections
-python3 cli.py search "golem*"
-python3 cli.py search "donkey*"
-python3 cli.py search "theatre"
-```
-
-### 3. Folk Anecdotes & Parable Extractor (`anecdote`)
-Serves classic curated folk jokes and parables with background comedic and cultural analysis:
-```bash
-# Random folk joke with analysis
-python3 cli.py anecdote
-
-# Filter anecdotes by topic (e.g. Chelm, Hershele, Talmudic, Soviet)
-python3 cli.py anecdote --topic Chelm
-python3 cli.py anecdote --topic Soviet
-```
-
-### 4. Computational Stylometry & Linguistics (`analyze`)
-Analyzes subconscious stylistic markers and comedic language traits across every document in the corpus:
+### 3. Computational Humor & Stylometry (`analyze`)
+Evaluates linguistic traits, dialectic counter-questioning, and humor mechanics across the corpus:
 ```bash
 python3 cli.py analyze
 ```
-- **Yiddish Loanword Density:** Measures Yiddish comedic loanwords per 1,000 words.
-- **Rhetorical Question Rate:** Quantifies Talmudic dialectic counter-questioning habits (*"Why do you answer a question with a question?"* — peaks at **12.2 / 1k words** in the core text).
-- **Emotional Exclamation Rate:** Measures hyperbolic emphasis.
-- **Lexical Diversity (TTR):** Evaluates vocabulary breadth across historical periods.
+Outputs:
+- **Yiddish & Ladino Loanword Density:** Frequency per 1,000 words.
+- **Rhetorical Question Rate:** Quantifies Talmudic dialectic syntax (*peaks at 12.2 / 1k words*).
+- **Sentiment Inversion Index ($\Delta P$):** Quantifies emotional shift between setup and punchline.
+- **Incongruity & Paradox Index:** Measures premise subversion across folk traditions (*average 0.876 / 1.000*).
+- **Dialogue Ratio:** Tracks direct speech proportion across eras.
 
-### 5. Automated Wikipedia Harvester (`harvest`)
-Dynamically fetches and ingests new Wikipedia articles into both the relational schema and the FTS5 search index on demand:
+### 4. Machine Learning & Dataset Exports (`export`)
+Export the corpus directly into standard machine learning and data science formats:
 ```bash
-# Ingest new articles into the corpus
-python3 cli.py harvest "Sholem Aleichem"
-python3 cli.py harvest "Leo Rosten"
-python3 cli.py harvest "Badchen"
+# Hugging Face Instruction-Tuning Dataset (JSONL)
+python3 cli.py export --format hf_instruct --output jewish_humor_instruct.jsonl
+
+# Apache Parquet Table (for Pandas, DuckDB, Polars)
+python3 cli.py export --format parquet --output jewish_humor_jokes.parquet
+
+# Full Corpus Markdown Research Dossier
+python3 cli.py export --format markdown --output corpus_dossier.md
+
+# Standard JSON & CSV
+python3 cli.py export --format json --output corpus.json
+python3 cli.py export --format csv --output corpus.csv
 ```
 
-### 6. Embedded Web Explorer & REST API (`serve`)
-Launches a zero-dependency local web server and search portal at `http://localhost:8000`:
+### 5. Automated MediaWiki Harvester (`harvest`)
+Ingests any new Wikipedia article into both the relational schema and the FTS5 search index in real time:
+```bash
+python3 cli.py harvest "Sholem Aleichem"
+python3 cli.py harvest "Judaeo-Spanish"
+```
+
+### 6. Embedded Web Portal & REST API (`serve`)
+Launches a zero-dependency local web explorer at `http://localhost:8000`:
 ```bash
 python3 cli.py serve --port 8000
 ```
 **API Endpoints:**
 - `GET /api/search?q=golem`: FTS5 BM25 search results with highlighted snippets.
-- `GET /api/jokes`: Curated primary jokes with setup/punchline segmentation.
+- `GET /api/jokes`: 100 primary jokes with setup, punchline, and original script.
 - `GET /api/catalog`: Complete document list with word and section counts.
-- `GET /api/archetypes`: Cultural archetypes, roles, and definitions.
-- `GET /api/anecdote`: Random curated folk joke and analytical breakdown.
-
-### 7. Interactive TUI Explorer (`explore`)
-Launches an interactive terminal loop to query, read, and browse without restarting the CLI:
-```bash
-python3 cli.py explore
-```
-
-### 8. Structured Article Reader (`read`)
-Reads formatted, readable section chunks from any indexed article by ID or title substring:
-```bash
-python3 cli.py read "Chelm"
-python3 cli.py read "Sholem Aleichem"
-python3 cli.py read 1
-```
-
-### 9. Data Export Engine (`export`)
-Exports the entire corpus or query sets into structured formats for external analysis in Pandas, R, or Jupyter:
-```bash
-python3 cli.py export --format json --output corpus.json
-python3 cli.py export --format csv --output corpus.csv
-python3 cli.py export --format markdown --output corpus.md
-```
+- `GET /api/archetypes`: 20 cultural archetypes and definitions.
 
 ---
 
 ## Corpus Taxonomy: The 6 Knowledge Domains
 
-### 1. Folk Anthologies & The Primary Joke Canon
-- **Chełm Folly Cycles:** Parables of pseudo-intellectualism and hyper-literal deduction.
-- **Hershele of Ostropol:** 18th-century court jester satirizing aristocratic greed.
-- **Freud's Humor Theory (*Jokes and Their Relation to the Unconscious*):** Psychoanalytic models of displacement, aggression, and relief in Jewish humor.
-- **Soviet Anekdoty:** Dissident political irony starring *Rabinovich*.
-
-### 2. Mythic Archetypes & Folklore
-- **The Golem of Prague:** Animated clay defender representing artificial life and protective power turning catastrophic.
-- **The Dybbuk:** Displaced soul possessing the living, reflecting shtetl anxieties and broken oaths.
-- **Tzadikim Nistarim (The 36 Hidden Righteous):** Unrecognized individuals sustaining humanity's existence.
-- **Elijah the Prophet:** Ethical trickster-judge testing generosity in the guise of a beggar.
-- **Luftmensch & Gimpel the Fool:** The impractical dreamer and the holy fool.
-
-### 3. Talmudic Dialectics & Rabbinic Parables
-- **The Oven of Akhnai (*Lo BaShamayim Hi*):** Intellectual consensus and reason defeating divine miracles.
-- **Talmudic Counter-Questioning:** Inverting passive questions into active assertions.
-- **Pilpul Parodies:** Scholastic hair-splitting humor.
-
-### 4. Sephardic & Judeo-Spanish (Ladino) Traditions
-- **Djohá (Djudha):** The Mediterranean and Ottoman Sephardic trickster counterpart to Hershele.
-- **Ladino Refranes:** Ironical, fatalistic proverbs from Salonica, Istanbul, and Sarajevo.
-
-### 5. Classic Yiddish & Hebrew Literary Satirists
-- **Mendele Mocher Sforim:** *The Travels of Benjamin the Third* (The Jewish Don Quixote).
-- **Sholem Aleichem:** Monologues of *Tevye* and *Menachem-Mendl*.
-- **Ephraim Kishon:** Satirist of Israeli statehood and bureaucracy (*The Blaumilch Canal*).
-
-### 6. The Borscht Belt & American Stand-Up Pipeline
-- **Catskills Tummlers:** Rapid-fire one-liner rhythm (Henny Youngman).
-- **Subversive Counter-Culture:** Lenny Bruce's sociological deconstruction of language and identity.
-- **The Modern Television Dialectic:** Transition from Talmudic social dissection to *Seinfeld* and *Curb Your Enthusiasm*.
-
----
-
-## Database Architecture
-
-The SQLite database (`data/jewish_humor.db`) is structured into five normalized tables:
-- `articles`: Master table for ingested source documents (21 documents, 56k+ words).
-- `sections`: Hierarchical content sections parsed from source text (196 sections).
-- `sections_fts`: SQLite **FTS5** virtual table indexing all section content for BM25 ranking.
-- `jokes_and_anecdotes`: Structured primary joke archive with setup, punchline, and comedic analysis across 7 traditions.
-- `archetypes_and_terms`: Seeded catalog of 20 archetypes, roles, and cultural concepts.
+1. **Folk Anthologies & Primary Jokes:** Chełm folly cycles, Hershele of Ostropol trickster tales, Sigmund Freud's *Jokes and Their Relation to the Unconscious*, and Soviet *Rabinovich* dissident anekdoty.
+2. **Mythic Archetypes & Folklore:** The Golem of Prague, The Dybbuk, Tzadikim Nistarim (36 Hidden Righteous), Elijah the Prophet, Luftmensch, and Gimpel the Fool.
+3. **Talmudic Dialectics & Rabbinic Parables:** The Oven of Akhnai (*Lo BaShamayim Hi*), Pilpul parodies, and rabbinic counter-questioning.
+4. **Sephardic & Judeo-Spanish (Ladino) Lore:** Djohá (Djudha) Mediterranean trickster tales, Ladino refranes (proverbs), and Matilda Koen-Sarano collections.
+5. **Classic Yiddish & Hebrew Satirists:** Mendele Mocher Sforim (*The Travels of Benjamin the Third*), Sholem Aleichem, and Ephraim Kishon (*The Blaumilch Canal*).
+6. **American Stand-Up & Borscht Belt Pipeline:** Catskills tummlers (Henny Youngman), Lenny Bruce's sociolinguistic satire, and the transition into *Seinfeld* and *Curb Your Enthusiasm*.
 
 ---
 

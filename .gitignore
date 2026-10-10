@@ -3,4 +3,6 @@ __pycache__/
 *$py.class
 .venv/
 *.egg-info/
-*_export.json
+*.parquet
+*.jsonl
+*_export.*
