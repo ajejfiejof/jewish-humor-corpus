@@ -7,11 +7,12 @@
 
 ## Overview
 
-The **Corpus of Jewish Humor** is an open research database and natural language processing dataset initialized from foundational scholarly, historical, and folkloric texts. It indexes the historical progression of Jewish humor from ancient Talmudic wit to the modern Borscht Belt and contemporary satire.
+The **Corpus of Jewish Humor** is an open research database and natural language processing suite initialized from foundational scholarly, historical, and folkloric texts. It indexes the historical progression of Jewish humor from ancient Talmudic wit to the modern Borscht Belt, Soviet political *anekdoty*, and contemporary satire.
 
-- **Primary Database:** SQLite 3 (`data/jewish_humor.db`)
-- **Indexed Volume:** **22,978 words** across **8 foundational texts** and **74 categorized sections**.
+- **Primary Database:** SQLite 3 with **FTS5 Full-Text Search** (`data/jewish_humor.db`)
+- **Indexed Volume:** **26,290 words** across **9 foundational texts** and **86 categorized sections**.
 - **Cultural Entities:** Pre-indexed archetypes (*Schlemiel*, *Schlimazel*, *Wise Men of Chełm*, *Hershele Ostropoler*, *Chutzpah*, *Badchen*).
+- **Stylometric Engine:** Pre-compiled lexicon of 80+ Yiddish loanwords, question/exclamation density metrics, and Type-Token Ratio (TTR) analysis.
 
 ---
 
@@ -31,20 +32,69 @@ Launch the full terminal visualization suite:
 python3 demo.py
 ```
 
-### 3. Querying the Corpus via CLI
-The included `cli.py` tool provides instant searching, archetype inspection, and catalog exploration:
-
+### 3. Running Automated Tests
+Verify database integrity, FTS5 index, and CLI suite:
 ```bash
-# List all indexed documents and section metrics
+python3 -m unittest discover tests
+```
+
+---
+
+## CLI Capabilities & Feature Suite
+
+The included `cli.py` tool provides a complete suite for querying, analyzing, expanding, and exporting the corpus.
+
+### Full-Text Search with BM25 Ranking (`search`)
+Leverages SQLite's native **FTS5** full-text search engine with BM25 relevance scoring and colored snippet highlighting:
+```bash
+# Search for keywords or prefix wildcards
+python3 cli.py search "soup*"
+python3 cli.py search "rabbi"
+python3 cli.py search "theatre"
+```
+
+### Computational Stylometry & Linguistics (`analyze`)
+Analyzes subconscious stylistic markers and comedic language traits across every document:
+```bash
+python3 cli.py analyze
+```
+- **Yiddish Loanword Density:** Measures Yiddish comedic loanwords per 1,000 words.
+- **Rhetorical Question Rate:** Captures Talmudic counter-questioning habits (*"Why do you answer a question with a question?"*).
+- **Emotional Exclamation Rate:** Quantifies hyperbolic emphasis.
+- **Lexical Diversity (TTR):** Evaluates vocabulary breadth across eras.
+
+### Automated Wikipedia Harvester (`harvest`)
+Dynamically fetches and ingests new Wikipedia articles into both the relational schema and the FTS5 search index on demand:
+```bash
+# Ingest new articles into the corpus
+python3 cli.py harvest "Sholem Aleichem"
+python3 cli.py harvest "Leo Rosten"
+python3 cli.py harvest "Badchen"
+```
+
+### Structured Article Reader (`read`)
+Reads formatted, readable section chunks from any indexed article by ID or title substring:
+```bash
+python3 cli.py read "Chelm"
+python3 cli.py read "Sholem Aleichem"
+python3 cli.py read 1
+```
+
+### Data Export Engine (`export`)
+Exports the entire corpus or query sets into structured formats for external analysis in Pandas, R, or Jupyter:
+```bash
+python3 cli.py export --format json --output corpus.json
+python3 cli.py export --format csv --output corpus.csv
+python3 cli.py export --format markdown --output corpus.md
+```
+
+### Document & Archetype Exploration (`catalog`, `archetypes`)
+```bash
+# List all indexed documents, word counts, and section metrics
 python3 cli.py catalog
 
 # Display core cultural archetypes and comic tropes
 python3 cli.py archetypes
-
-# Search across all 74 indexed sections for a keyword
-python3 cli.py search "logic"
-python3 cli.py search "soup"
-python3 cli.py search "trickster"
 ```
 
 ---
@@ -70,17 +120,11 @@ python3 cli.py search "trickster"
 
 ## Database Architecture
 
-The SQLite database (`data/jewish_humor.db`) is structured into three normalized tables:
-
-```sql
--- Retrieve all sections detailing folklore and paradoxes
-SELECT a.title, s.section_title, s.word_count
-FROM sections s
-JOIN articles a ON s.article_id = a.id
-WHERE s.section_title LIKE '%Chelm%' 
-   OR s.section_title LIKE '%Hershel%'
-ORDER BY s.word_count DESC;
-```
+The SQLite database (`data/jewish_humor.db`) is structured into four normalized tables:
+- `articles`: Master table for ingested source documents.
+- `sections`: Hierarchical content sections parsed from source text.
+- `sections_fts`: SQLite **FTS5** virtual table indexing all section content for BM25 ranking.
+- `archetypes_and_terms`: Seeded glossary of archetypes, roles, and cultural concepts.
 
 ---
 
