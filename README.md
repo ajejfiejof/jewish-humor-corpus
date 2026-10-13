@@ -158,4 +158,36 @@ python3 cli.py serve --port 8000
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project has a dual-license structure:
+
+### Code (CLI, demo, tests, tooling)
+This project's source code is licensed under the [MIT License](LICENSE).
+
+### Data (jokes, archetypes, corpus text)
+The dataset contents are licensed under [CC BY-SA 4.0](LICENSE_CC_BY_SA4) with proper attribution.
+
+The code is AGPL-3.0-or-later licensed (see LICENSE_AGPL3), ensuring that network use of the software
+remains free and open. The data components use CC BY-SA 4.0, which is compatible for end-user
+access but requires attribution and share-alike on derivative works of the data.
+
+#### Attribution requirements for data:
+
+- **Wikipedia-derived content**: Used under CC BY-SA 4.0 - see individual source attributions
+- **Druyanov's Sefer ha-Bediḥah ve-ha-Ḥidud**: Public domain via Project Ben-Yehuda
+- **Matilda Koen-Sarano's Djohá folk tales**: Attribution required per original collections
+- **Ephraim Kishon stories**: Used with reference/attribution
+- **All other sources**: Noted in the database `source` field
+
+#### Rationale:
+
+The code (CLI, web interface, search, analytics) is AGPL-3.0 to satisfy the network-use clause
+and ensure the software remains free when used over a network. The data components include both
+public-domain material (Druyanov, certain folklore) and CC BY-SA 4.0 content (Wikipedia-derived,
+Koen-Sarano collections, Kishon). This separation respects the different licensing requirements
+while keeping the corpus as a unified, usable dataset.
+
+For details on individual joke sources and their rights status, query the database:
+```sql
+SELECT id, title, source, rights FROM jokes_and_anecdotes;
+```
+

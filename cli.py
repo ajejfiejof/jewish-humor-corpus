@@ -290,7 +290,7 @@ def cmd_search(query, mode="hybrid", limit=5):
 def cmd_jokes(tradition=None, category=None, search=None):
     conn = get_connection()
     cur = conn.cursor()
-    query = "SELECT id, title, tradition, category, setup, punchline, analysis, source, text_original, script_original, yivo_transliteration, sentiment_setup, sentiment_punchline, incongruity_score FROM jokes_and_anecdotes WHERE 1=1"
+    query = "SELECT id, title, tradition, category, setup, punchline, analysis, source, title_original, script_original, yivo_transliteration, sentiment_setup, sentiment_punchline, incongruity_score FROM jokes_and_anecdotes WHERE 1=1"
     params = []
     if tradition:
         query += " AND tradition LIKE ?"
@@ -719,8 +719,8 @@ def cmd_serve(port=8000):
             elif path == "/api/jokes":
                 conn = get_connection()
                 cur = conn.cursor()
-                cur.execute("SELECT id, title, tradition, category, setup, punchline, analysis, source, text_original, script_original, yivo_transliteration, incongruity_score FROM jokes_and_anecdotes")
-                data = [{"id": r[0], "title": r[1], "tradition": r[2], "category": r[3], "setup": r[4], "punchline": r[5], "analysis": r[6], "source": r[7], "text_original": r[8], "script_original": r[9], "yivo": r[10], "incongruity": r[11]} for r in cur.fetchall()]
+                cur.execute("SELECT id, title, tradition, category, setup, punchline, analysis, source, title_original, script_original, yivo_transliteration, incongruity_score FROM jokes_and_anecdotes")
+                data = [{"id": r[0], "title": r[1], "tradition": r[2], "category": r[3], "setup": r[4], "punchline": r[5], "analysis": r[6], "source": r[7], "title_original": r[8], "script_original": r[9], "yivo": r[10], "incongruity": r[11]} for r in cur.fetchall()]
                 conn.close()
                 self.send_json(data)
             elif path == "/api/search":
@@ -875,7 +875,7 @@ def cmd_serve(port=8000):
                         <span class="badge">${j.tradition}</span>
                         <span style="font-size:12px; color:var(--muted)">${j.category}</span>
                     </div>
-                    ${j.text_original ? `<p style="color:var(--cyan); font-weight:bold; margin:4px 0 8px;">${j.text_original} <span style="font-weight:normal; font-size:12px; color:var(--muted);">(${j.yivo || ''})</span></p>` : ''}
+                    ${j.title_original ? `<p style="color:var(--cyan); font-weight:bold; margin:4px 0 8px;">${j.title_original} <span style="font-weight:normal; font-size:12px; color:var(--muted);">(${j.yivo || ''})</span></p>` : ''}
                     <h3 style="margin: 4px 0 10px;">${j.title}</h3>
                     <p class="joke-setup">${j.setup}</p>
                     <p class="joke-punch">${j.punchline}</p>
